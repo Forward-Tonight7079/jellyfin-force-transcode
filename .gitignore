@@ -1,0 +1,6 @@
+# local test overrides
+/rules.json
+*.local
+
+# local reddit post draft (not for the repo)
+reddit-draft.md

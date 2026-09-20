@@ -1,0 +1,13 @@
+services:
+  jellyfin-force-transcode:
+    image: ghcr.io/forward-tonight7079/jellyfin-force-transcode:latest
+    container_name: jellyfin-force-transcode
+    restart: unless-stopped
+    ports:
+      - "8097:8080"
+    environment:
+      JELLYFIN_URL: "http://192.168.1.50:8096"   # your Jellyfin address (the only required setting)
+      # LOG: "events"                            # events (default) | full | quiet
+    volumes:
+      # Without a rules.json the proxy does nothing. This file defines what to force.
+      - ./rules.json:/addon/rules.json:ro

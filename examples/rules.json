@@ -1,0 +1,21 @@
+{
+  "rules": [
+    { "name": "kids-account-any-device",
+      "match": { "user_id": "3f2a1b4c5d6e7f8091a2b3c4d5e6f708" },
+      "max_audio_channels": 2 },
+
+    { "name": "any-android-app",
+      "match": { "client": "/Android/" },
+      "max_audio_channels": 2,
+      "max_width": 1280,
+      "max_bitrate": 6000000 },
+
+    { "name": "living-room-tv-force-video-only",
+      "match": { "device_id": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678" },
+      "max_bitrate": 20000000 },
+
+    { "name": "everything-else",
+      "match": {},
+      "max_audio_channels": 2 }
+  ]
+}
