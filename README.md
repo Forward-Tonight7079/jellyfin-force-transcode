@@ -182,6 +182,8 @@ only the address of your Jellyfin. This example has several profiles:
 | `keep_audio_codecs` | Codecs that a client may still direct-play (default `aac,mp3`). Used only with `max_audio_channels`. |
 | `max_bitrate` | Limit for the total stream bitrate, in bits per second (for example, `6000000`). Forces **video** transcode when the source is higher. |
 | `max_width` | Limit for the transcode width, in pixels (for example, `1280` = 720p). Forces a downscale for wider video. |
+| `max_video_bit_depth` | Limit for the video bit depth (for example, `8`). Forces **video** transcode when the source is deeper, such as 10-bit HEVC. |
+| `keep_video_codecs` | Video codecs that a client may direct-play (for example, `h264`). Other codecs are transcoded. |
 
 A rule with none of these fields does nothing.
 

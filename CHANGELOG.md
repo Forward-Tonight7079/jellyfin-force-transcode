@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-09-23
+
+### Added
+- `max_video_bit_depth` rule field — forces video transcode when the source bit depth is higher
+  (for example `8` transcodes 10-bit HEVC while 8-bit keeps direct-playing).
+- `keep_video_codecs` rule field — a whitelist of video codecs a client may direct-play (like
+  `keep_audio_codecs` for audio); other codecs are transcoded.
+
 ## [0.1.0] - 2026-09-20
 
 ### Added
@@ -19,4 +27,5 @@ All notable changes to this project are documented here. The format is based on
 - Multi-arch image (linux/amd64, linux/arm64) published to GHCR by CI; pytest test suite gating the
   build.
 
+[0.2.0]: https://github.com/Forward-Tonight7079/jellyfin-force-transcode/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Forward-Tonight7079/jellyfin-force-transcode/releases/tag/v0.1.0

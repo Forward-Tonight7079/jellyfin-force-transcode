@@ -110,6 +110,23 @@ def apply_rule(rule, dp):
         dp["MaxStreamingBitrate"] = rule["max_bitrate"]
         changed = True
 
+    # keep_video_codecs: restrict which video codecs a client may direct-play.
+    kv = rule.get("keep_video_codecs")
+    if kv:
+        for d in (dp.get("DirectPlayProfiles") or []):
+            if d.get("Type") == "Video" and d.get("VideoCodec"):
+                d["VideoCodec"] = kv
+        changed = True
+
+    # max_video_bit_depth: force transcode above this bit depth (e.g. 8 -> 10-bit transcodes).
+    bd = rule.get("max_video_bit_depth")
+    if isinstance(bd, int):
+        _codec_profiles(dp).append(
+            {"Type": "Video", "Codec": "h264,hevc,mpeg4,vp9,av1,vc1",
+             "Conditions": [{"Condition": "LessThanEqual", "Property": "VideoBitDepth",
+                             "Value": str(bd), "IsRequired": True}]})
+        changed = True
+
     return changed
 
 

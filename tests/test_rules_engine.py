@@ -112,6 +112,30 @@ def test_apply_nothing_changes_nothing():
     assert engine.apply_rule({"name": "noop", "match": {}}, dp) is False
     assert dp == dp_basic()
 
+def test_apply_max_video_bit_depth():
+    dp = {"DirectPlayProfiles": [{"Type": "Video", "VideoCodec": "h264,hevc", "AudioCodec": "aac"}],
+          "TranscodingProfiles": [{"Type": "Video"}], "CodecProfiles": []}
+    assert engine.apply_rule({"max_video_bit_depth": 8}, dp) is True
+    conds = [c for v in dp["CodecProfiles"] if v.get("Type") == "Video" for c in v["Conditions"]]
+    assert any(c.get("Property") == "VideoBitDepth" and c.get("Value") == "8" for c in conds)
+    # audio and the direct-play video codec list are untouched
+    assert dp["DirectPlayProfiles"][0]["AudioCodec"] == "aac"
+    assert dp["DirectPlayProfiles"][0]["VideoCodec"] == "h264,hevc"
+
+def test_apply_keep_video_codecs():
+    dp = {"DirectPlayProfiles": [{"Type": "Video", "VideoCodec": "h264,hevc,av1", "AudioCodec": "aac,eac3"}],
+          "TranscodingProfiles": [{"Type": "Video"}], "CodecProfiles": []}
+    assert engine.apply_rule({"keep_video_codecs": "h264"}, dp) is True
+    assert dp["DirectPlayProfiles"][0]["VideoCodec"] == "h264"
+    # audio untouched
+    assert dp["DirectPlayProfiles"][0]["AudioCodec"] == "aac,eac3"
+
+def test_keep_video_codecs_ignores_entries_without_videocodec():
+    dp = {"DirectPlayProfiles": [{"Type": "Video", "AudioCodec": "aac"}],
+          "TranscodingProfiles": [], "CodecProfiles": []}
+    engine.apply_rule({"keep_video_codecs": "h264"}, dp)
+    assert "VideoCodec" not in dp["DirectPlayProfiles"][0]
+
 
 # --- load_rules -----------------------------------------------------------
 
