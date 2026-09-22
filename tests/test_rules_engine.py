@@ -45,6 +45,18 @@ def test_auth_fields():
     assert f["Client"] == "Jellyfin for Android"
     assert f["DeviceId"] == "abc123"
 
+def test_auth_fields_decodes_plus_and_percent():
+    # Real clients encode spaces. "+" and "%20" must decode to a space.
+    a = 'MediaBrowser Client="Jellyfin+for+Android", Device="Jellyfin%20Media%20Player"'
+    f = engine.auth_fields(a)
+    assert f["Client"] == "Jellyfin for Android"
+    assert f["Device"] == "Jellyfin Media Player"
+
+def test_exact_client_match_after_decode():
+    # The encoded header value must match the human-readable rule value.
+    ctx = engine.build_ctx('MediaBrowser Client="Jellyfin+for+Android"', "UA", None, {})
+    assert engine.value_matches("Jellyfin for Android", ctx["client"])
+
 def test_ctx_user_id_from_query_wins():
     ctx = engine.build_ctx('MediaBrowser Client="X"', "UA", "uid-query", {"UserId": "uid-body"})
     assert ctx["user_id"] == "uid-query"

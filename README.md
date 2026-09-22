@@ -197,7 +197,7 @@ For each `POST .../PlaybackInfo` request, the addon reads four values from the r
 
 | Match key | Taken from |
 |---|---|
-| `client` | the `Client="..."` field of the Authorization header (for example, `Jellyfin for Android`, `Jellyfin Android TV`, `Jellyfin Web`, `Findroid`) |
+| `client` | the `Client="..."` field of the Authorization header (for example, `Jellyfin for Android`, `Jellyfin Android TV`, `Jellyfin Web`, `Findroid`). The proxy decodes this value, so match the name with normal spaces. |
 | `device_id` | the `DeviceId="..."` field of the Authorization header — one device install |
 | `user_agent` | the `User-Agent` header |
 | `user_id` | the Jellyfin user — the `userId` query parameter (or `UserId` in the body) |

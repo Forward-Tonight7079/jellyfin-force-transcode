@@ -4,6 +4,7 @@ No mitmproxy dependency, so it is unit-testable with plain Python. rewrite.py is
 a thin mitmproxy adapter around these functions.
 """
 import json, logging, os, re
+from urllib.parse import unquote_plus
 
 log = logging.getLogger("force-transcode")
 
@@ -56,7 +57,9 @@ def pick_rule(rules, ctx):
 
 def auth_fields(auth):
     # 'MediaBrowser Client="X", Device="Y", DeviceId="Z", Version="1", Token="..."'
-    return dict(re.findall(r'(\w+)="([^"]*)"', auth or ""))
+    # The client encodes the values (a space becomes "+" or "%20"). Decode them,
+    # so a rule can match the human-readable name, for example "Jellyfin for Android".
+    return {k: unquote_plus(v) for k, v in re.findall(r'(\w+)="([^"]*)"', auth or "")}
 
 
 def build_ctx(auth, user_agent, query_user_id, body):

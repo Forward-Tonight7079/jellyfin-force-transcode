@@ -3,6 +3,14 @@
 This file lists all notable changes to the project. It follows
 [Keep a Changelog](https://keepachangelog.com/) and [Semantic Versioning](https://semver.org/).
 
+## [0.2.2] - 2026-09-22
+
+### Fixed
+- Match `client` and `device` against the human-readable value. The client encodes these values in the
+  Authorization header (a space becomes `+` or `%20`, for example `Jellyfin+for+Android`). The proxy
+  now decodes them. Before, an exact `client` match with a space (for example
+  `"client": "Jellyfin for Android"`) never matched, and the rule was skipped.
+
 ## [0.2.1] - 2026-09-22
 
 ### Added
@@ -38,6 +46,7 @@ This file lists all notable changes to the project. It follows
 - Multi-arch image (linux/amd64, linux/arm64) published to GHCR by CI; pytest test suite gating the
   build.
 
+[0.2.2]: https://github.com/Forward-Tonight7079/jellyfin-force-transcode/releases/tag/v0.2.2
 [0.2.1]: https://github.com/Forward-Tonight7079/jellyfin-force-transcode/releases/tag/v0.2.1
 [0.2.0]: https://github.com/Forward-Tonight7079/jellyfin-force-transcode/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Forward-Tonight7079/jellyfin-force-transcode/releases/tag/v0.1.0
