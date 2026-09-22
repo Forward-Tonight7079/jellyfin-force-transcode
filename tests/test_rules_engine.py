@@ -137,6 +137,37 @@ def test_keep_video_codecs_ignores_entries_without_videocodec():
     assert "VideoCodec" not in dp["DirectPlayProfiles"][0]
 
 
+# --- describe_ctx / describe_rule (log helpers) ---------------------------
+
+def test_describe_ctx_shows_parsed_values():
+    ctx = engine.build_ctx('MediaBrowser Client="Jellyfin for Android", DeviceId="abc"',
+                           "UA", "uid-1", {})
+    s = engine.describe_ctx(ctx)
+    assert "client='Jellyfin for Android'" in s
+    assert "device_id='abc'" in s
+    assert "user_id='uid-1'" in s
+
+def test_describe_ctx_shows_none_for_missing():
+    ctx = engine.build_ctx("", "", None, {})
+    assert "client=None" in engine.describe_ctx(ctx)
+
+def test_describe_rule_lists_all_fields():
+    rule = {"name": "r", "max_audio_channels": 2, "keep_audio_codecs": "aac",
+            "max_width": 1344, "max_bitrate": 6000000,
+            "keep_video_codecs": "h264", "max_video_bit_depth": 8}
+    s = engine.describe_rule(rule)
+    assert s == "maxch=2 keepac=aac maxw=1344 maxbr=6000000 keepvc=h264 maxbits=8"
+
+def test_describe_rule_audio_default_keep():
+    assert engine.describe_rule({"max_audio_channels": 2}) == "maxch=2 keepac=aac,mp3"
+
+def test_describe_rule_only_present_fields():
+    assert engine.describe_rule({"max_video_bit_depth": 8}) == "maxbits=8"
+
+def test_describe_rule_empty_is_noop():
+    assert engine.describe_rule({"name": "x", "match": {}}) == "no-op"
+
+
 # --- load_rules -----------------------------------------------------------
 
 def test_load_rules_missing(tmp_path):

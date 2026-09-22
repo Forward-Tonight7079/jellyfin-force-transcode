@@ -26,19 +26,34 @@ elif LOG_MODE == "quiet":
     log.setLevel(logging.CRITICAL + 1)
     log.propagate = False
 
+# Remember which identities we logged, so we print each client only one time.
+_seen = set()
+
+
+def _log_identity(ctx):
+    key = (ctx.get("client"), ctx.get("device_id"))
+    if key in _seen:
+        return
+    _seen.add(key)
+    # Show the values that a rule `match` must use. Put a rule after this.
+    log.info("PlaybackInfo from %s" % engine.describe_ctx(ctx))
+
+
 def request(flow: http.HTTPFlow) -> None:
     try:
         req = flow.request
         if req.method != "POST" or "/PlaybackInfo" not in req.path:
-            return
-        rules = engine.load_rules(RULES_PATH)
-        if not rules:
             return
 
         data = json.loads(req.get_text() or "{}")
         auth = req.headers.get("Authorization", "") + " " + req.headers.get("X-Emby-Authorization", "")
         uid = req.query.get("userId") or req.query.get("UserId")
         ctx = engine.build_ctx(auth, req.headers.get("User-Agent", ""), uid, data)
+        _log_identity(ctx)
+
+        rules = engine.load_rules(RULES_PATH)
+        if not rules:
+            return
 
         rule = engine.pick_rule(rules, ctx)
         if not rule:
@@ -50,9 +65,8 @@ def request(flow: http.HTTPFlow) -> None:
             return
 
         req.set_text(json.dumps(data))
-        log.info("rewrote PlaybackInfo via rule=%s (maxch=%s maxw=%s maxbr=%s) %s"
-                 % (rule.get("name", "?"), rule.get("max_audio_channels", "-"),
-                    rule.get("max_width", "-"), rule.get("max_bitrate", "-"), req.path))
+        log.info("rewrote PlaybackInfo rule=%s (%s) client=%r"
+                 % (rule.get("name", "?"), engine.describe_rule(rule), ctx.get("client")))
     except Exception as e:
         log.warning("addon error, passthrough: %s" % e)
         return

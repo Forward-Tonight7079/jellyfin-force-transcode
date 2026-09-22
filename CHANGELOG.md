@@ -3,7 +3,19 @@
 This file lists all notable changes to the project. It follows
 [Keep a Changelog](https://keepachangelog.com/) and [Semantic Versioning](https://semver.org/).
 
-## [0.2.0] - 2026-09-23
+## [0.2.1] - 2026-09-22
+
+### Added
+- Log line `PlaybackInfo from client=… device_id=… user_id=… user_agent=…` — it prints one time for
+  each new client. It shows the exact values that the proxy parsed. Copy these values into a rule
+  `match`. They can differ from the Jellyfin dashboard.
+
+### Changed
+- The `rewrote PlaybackInfo` log line now lists every cap that the rule applied (`maxch`, `keepac`,
+  `maxw`, `maxbr`, `keepvc`, `maxbits`) and the parsed `client`. Before, it listed only `maxch`,
+  `maxw`, and `maxbr`.
+
+## [0.2.0] - 2026-09-22
 
 ### Added
 - `max_video_bit_depth` rule field — forces video transcode when the source bit depth is higher
@@ -26,5 +38,6 @@ This file lists all notable changes to the project. It follows
 - Multi-arch image (linux/amd64, linux/arm64) published to GHCR by CI; pytest test suite gating the
   build.
 
+[0.2.1]: https://github.com/Forward-Tonight7079/jellyfin-force-transcode/releases/tag/v0.2.1
 [0.2.0]: https://github.com/Forward-Tonight7079/jellyfin-force-transcode/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Forward-Tonight7079/jellyfin-force-transcode/releases/tag/v0.1.0

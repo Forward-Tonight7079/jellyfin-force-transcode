@@ -68,6 +68,34 @@ def build_ctx(auth, user_agent, query_user_id, body):
             "user_agent": user_agent or "", "user_id": uid}
 
 
+# --- log helpers ----------------------------------------------------------
+
+def describe_ctx(ctx):
+    """Show the identity that the proxy parsed. Use these exact values in a
+    rule `match`. The values can differ from the Jellyfin dashboard."""
+    return ("client=%r device_id=%r user_id=%r user_agent=%r"
+            % (ctx.get("client"), ctx.get("device_id"),
+               ctx.get("user_id"), ctx.get("user_agent")))
+
+
+def describe_rule(rule):
+    """List the caps that a rule applies. This mirrors apply_rule."""
+    parts = []
+    ch = rule.get("max_audio_channels")
+    if ch is not None:
+        parts.append("maxch=%s" % ch)
+        parts.append("keepac=%s" % rule.get("keep_audio_codecs", "aac,mp3"))
+    if isinstance(rule.get("max_width"), int):
+        parts.append("maxw=%s" % rule["max_width"])
+    if isinstance(rule.get("max_bitrate"), int):
+        parts.append("maxbr=%s" % rule["max_bitrate"])
+    if rule.get("keep_video_codecs"):
+        parts.append("keepvc=%s" % rule["keep_video_codecs"])
+    if isinstance(rule.get("max_video_bit_depth"), int):
+        parts.append("maxbits=%s" % rule["max_video_bit_depth"])
+    return " ".join(parts) if parts else "no-op"
+
+
 # --- rewrite --------------------------------------------------------------
 
 def _codec_profiles(dp):

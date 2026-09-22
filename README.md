@@ -219,8 +219,14 @@ request passes through without changes.
 
 A bad regular expression does not stop playback. It does not match, and the proxy writes a warning.
 
-**Where to find the values.** The client name and the DeviceId are in **Dashboard → Devices**. The
-user id is in **Dashboard → Users** (open the user; the id is in the page address). Example formats:
+**Where to find the values.** The surest source is the log. Start the proxy with `LOG=events`, play
+one title on the device, and read the `PlaybackInfo from …` line (see [Logging](#logging)). It prints
+the exact `client`, `device_id`, and `user_id` that the proxy parsed. Copy these values into your
+`match`. The Jellyfin dashboard can show a different string, so prefer the log.
+
+The dashboard is still a good reference. The client name and the DeviceId are in **Dashboard →
+Devices**. The user id is in **Dashboard → Users** (open the user; the id is in the page address).
+Example formats:
 
 - `client`: `Jellyfin for Android`, `Jellyfin Android TV`, `Jellyfin Web`, `Findroid`, `Moonfin for Android`
 - `device_id` — an opaque value, one for each install: 40-character hex (Android TV), hex plus a
@@ -241,19 +247,32 @@ The container writes its logs to stdout. Read them with `docker logs -f jellyfin
 
 | `LOG` | Output |
 |---|---|
-| `events` (default) | Only the important lines: startup, `loaded N rule(s)`, each `rewrote PlaybackInfo …`, and warnings. It stays quiet on a busy server. |
+| `events` (default) | Only the important lines: startup, `loaded N rule(s)`, each new `PlaybackInfo from …` identity, each `rewrote PlaybackInfo …`, and warnings. It stays quiet on a busy server. |
 | `full` | Everything that mitmproxy sees — one line for each request (this includes video segments). Use it to debug. |
 | `quiet` | Silent (errors only). |
 
-The proxy writes only the rule name, the limits that it applied, and the request path. It never writes
+In `events` mode the proxy writes two useful lines:
+
+```
+jft: PlaybackInfo from client='Jellyfin for Android' device_id='a1b2…' user_id='3f2a…' user_agent='…'
+jft: rewrote PlaybackInfo rule=kids-tablet (maxch=2 keepac=aac,mp3 maxw=1344 maxbr=6000000 maxbits=8) client='Jellyfin for Android'
+```
+
+- The **`PlaybackInfo from …`** line prints one time for each new client. It shows the exact values that
+  the proxy parsed. **Copy these values into a rule `match`.** They can differ from the Jellyfin
+  dashboard, so this line is the surest source.
+- The **`rewrote PlaybackInfo …`** line shows which rule matched and every cap that it applied.
+
+The proxy writes only the rule name, the parsed identity, and the caps that it applied. It never writes
 tokens, credentials, or media content. Docker rotates the logs (with the standard `json-file` driver),
 so they do not grow without a limit.
 
 ## Troubleshooting
 
 **The client direct-plays. Nothing transcodes.** The rule did not match. Set `LOG=events`. Look for a
-`rewrote PlaybackInfo` line. If it is not there, check your `match`. A plain `client` value must be an
-exact match. Or use a `/regex/`. Confirm the real client name in **Dashboard → Devices**.
+`rewrote PlaybackInfo` line. If it is not there, find the `PlaybackInfo from …` line instead. It shows
+the exact `client` and `device_id` that the proxy parsed. Copy those values into your `match`. A plain
+`client` value must be an exact match; or use a `/regex/`.
 
 **The audio is still multichannel.** Make sure that the matched rule sets `max_audio_channels`. A
 video-only rule keeps the audio. Also confirm that the traffic goes through the proxy. The client's
