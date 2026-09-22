@@ -163,6 +163,10 @@ only the address of your Jellyfin. This example has several profiles:
       "match": { "client": "/Android/" },
       "max_audio_channels": 2, "max_width": 1280, "max_bitrate": 6000000 },
 
+    { "name": "fire-tablet-force-10bit-hevc",
+      "match": { "client": "Jellyfin Android TV" },
+      "max_video_bit_depth": 8 },
+
     { "name": "living-room-tv",
       "match": { "device_id": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678" },
       "max_bitrate": 20000000 },
