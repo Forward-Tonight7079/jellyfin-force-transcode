@@ -1,8 +1,7 @@
 # Changelog
 
-All notable changes to this project are documented here. The format is based on
-[Keep a Changelog](https://keepachangelog.com/), and the project follows
-[Semantic Versioning](https://semver.org/).
+This file lists all notable changes to the project. It follows
+[Keep a Changelog](https://keepachangelog.com/) and [Semantic Versioning](https://semver.org/).
 
 ## [0.2.0] - 2026-09-23
 
@@ -20,7 +19,7 @@ All notable changes to this project are documented here. The format is based on
   video transcoding for chosen clients.
 - Neutral by default: with no `rules.json` it passes everything through unchanged.
 - Matchers `client`, `device_id`, `user_agent`, `user_id` — each an exact string or a `/regex/`
-  (with flags, e.g. `i`).
+  (with flags, for example `i`).
 - Independent audio (`max_audio_channels`, `keep_audio_codecs`) and video (`max_width`,
   `max_bitrate`) caps.
 - `LOG=events|full|quiet` (default `events`).

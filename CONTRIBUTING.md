@@ -12,7 +12,7 @@ Thanks for helping improve jellyfin-force-transcode.
 
 ## Run the tests
 
-No third-party runtime deps are needed for the logic or tests:
+The logic and the tests need no third-party dependencies:
 
 ```bash
 pip install pytest
@@ -32,6 +32,6 @@ docker run --rm -p 8097:8080 \
 ## Guidelines
 
 - Add or adjust tests for any behaviour change.
-- Keep the addon **fail-safe**: any error must fall back to passing the request through unchanged.
+- Keep the addon **fail-safe**: on any error, it must pass the request through unchanged.
 - CI runs the tests first and only then builds the image — both must pass.
 - Keep the addon dependency-free beyond mitmproxy (which the base image provides).

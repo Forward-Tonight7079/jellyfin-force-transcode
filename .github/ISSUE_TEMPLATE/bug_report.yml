@@ -13,21 +13,21 @@ body:
     id: jellyfin
     attributes:
       label: Jellyfin version
-      placeholder: e.g. 10.10.3
+      placeholder: for example, 10.10.3
     validations:
       required: true
   - type: input
     id: client
     attributes:
       label: Client and player
-      placeholder: e.g. Jellyfin for Android 2.7.3, integrated (ExoPlayer) player
+      placeholder: for example, Jellyfin for Android 2.7.3, integrated (ExoPlayer) player
     validations:
       required: true
   - type: input
     id: image
     attributes:
       label: Image tag
-      placeholder: e.g. ghcr.io/forward-tonight7079/jellyfin-force-transcode:0.1.0
+      placeholder: for example, ghcr.io/forward-tonight7079/jellyfin-force-transcode:0.1.0
     validations:
       required: true
   - type: textarea
