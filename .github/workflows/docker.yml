@@ -71,10 +71,19 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # On a version tag, create the matching GitHub Release automatically
+      # On a version tag, take the notes for that version from CHANGELOG.md.
+      - name: Extract changelog section
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          awk -v v="$VER" 'BEGIN{h="## ["v"]"} index($0,h)==1{p=1;next} p && /^## \[/{exit} p{print}' CHANGELOG.md > RELEASE_NOTES.md
+          echo "----- release notes -----"; cat RELEASE_NOTES.md
+
+      # Create the matching GitHub Release automatically
       # (uses the built-in GITHUB_TOKEN, so no personal token is needed).
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          body_path: RELEASE_NOTES.md
           generate_release_notes: true
