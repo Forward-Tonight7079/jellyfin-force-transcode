@@ -76,7 +76,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           VER="${GITHUB_REF_NAME#v}"
-          awk -v v="$VER" 'BEGIN{h="## ["v"]"} index($0,h)==1{p=1;next} p && /^## \[/{exit} p{print}' CHANGELOG.md > RELEASE_NOTES.md
+          awk -v v="$VER" 'BEGIN{h="## ["v"]"} index($0,h)==1{p=1;next} p && (/^## \[/ || /^\[[^]]+\]:/){exit} p{print}' CHANGELOG.md > RELEASE_NOTES.md
           echo "----- release notes -----"; cat RELEASE_NOTES.md
 
       # Create the matching GitHub Release automatically
