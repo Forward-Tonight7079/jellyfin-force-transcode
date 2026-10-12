@@ -3,6 +3,23 @@
 This file lists all notable changes to the project. It follows
 [Keep a Changelog](https://keepachangelog.com/) and [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-10-12
+
+### Added
+- `transcode_audio_codec` rule field — the audio codec(s) that the server may send when it transcodes
+  or remuxes (for example `aac`, or `eac3,aac`). It replaces the client's own list. Without it, the
+  server can copy a blocked codec during a remux.
+- README section "Real cases" with the first case: an LG TV that reports Opus but stutters on it. The
+  fix sends AAC, keeps the channel count, and copies the video.
+- Example rule `lg-tv-no-opus` in `examples/rules.json`.
+
+### Changed
+- `keep_audio_codecs` now works alone. Before, it applied only together with `max_audio_channels`.
+  Alone, it blocks direct play of other audio codecs and keeps the channel count.
+- `keep_audio_codecs` now applies to every video direct-play entry. Before, it skipped an entry
+  without an `AudioCodec` list. Such an entry allows every codec, so the limit had a gap.
+- The `rewrote PlaybackInfo` log line shows `transac=…` for `transcode_audio_codec`.
+
 ## [0.2.2] - 2026-09-22
 
 ### Fixed
@@ -46,6 +63,7 @@ This file lists all notable changes to the project. It follows
 - Multi-arch image (linux/amd64, linux/arm64) published to GHCR by CI; pytest test suite gating the
   build.
 
+[0.3.0]: https://github.com/Forward-Tonight7079/jellyfin-force-transcode/releases/tag/v0.3.0
 [0.2.2]: https://github.com/Forward-Tonight7079/jellyfin-force-transcode/releases/tag/v0.2.2
 [0.2.1]: https://github.com/Forward-Tonight7079/jellyfin-force-transcode/releases/tag/v0.2.1
 [0.2.0]: https://github.com/Forward-Tonight7079/jellyfin-force-transcode/releases/tag/v0.2.0

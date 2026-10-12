@@ -87,7 +87,11 @@ def describe_rule(rule):
     ch = rule.get("max_audio_channels")
     if ch is not None:
         parts.append("maxch=%s" % ch)
-        parts.append("keepac=%s" % rule.get("keep_audio_codecs", "aac,mp3"))
+    keep = _keep_audio(rule)
+    if keep:
+        parts.append("keepac=%s" % keep)
+    if rule.get("transcode_audio_codec"):
+        parts.append("transac=%s" % rule["transcode_audio_codec"])
     if isinstance(rule.get("max_width"), int):
         parts.append("maxw=%s" % rule["max_width"])
     if isinstance(rule.get("max_bitrate"), int):
@@ -108,17 +112,42 @@ def _codec_profiles(dp):
     return cps
 
 
+def _keep_audio(rule):
+    """Audio codecs that the client may direct-play, or None (no limit).
+    With max_audio_channels the default is aac,mp3; alone it applies only when set."""
+    if rule.get("keep_audio_codecs"):
+        return rule["keep_audio_codecs"]
+    if rule.get("max_audio_channels") is not None:
+        return "aac,mp3"
+    return None
+
+
 def apply_rule(rule, dp):
     """Mutate a DeviceProfile in place per the rule. Returns True if changed."""
     changed = False
 
+    # keep_audio_codecs: restrict which audio codecs a client may direct-play.
+    # Set it on every video entry. An entry without AudioCodec allows every codec.
+    keep = _keep_audio(rule)
+    if keep:
+        for d in (dp.get("DirectPlayProfiles") or []):
+            if d.get("Type") == "Video":
+                d["AudioCodec"] = keep
+        changed = True
+
+    # transcode_audio_codec: the codec(s) that the server may send when it does not
+    # direct-play. Jellyfin copies the source audio if its codec is in this list,
+    # so this also stops a remux that keeps a bad codec (for example, Opus).
+    tac = rule.get("transcode_audio_codec")
+    if tac:
+        for tp in (dp.get("TranscodingProfiles") or []):
+            if tp.get("Type") == "Video":
+                tp["AudioCodec"] = tac
+        changed = True
+
     ch = rule.get("max_audio_channels")
     if ch is not None:
         ch = str(ch)
-        keep = rule.get("keep_audio_codecs", "aac,mp3")
-        for d in (dp.get("DirectPlayProfiles") or []):
-            if d.get("Type") == "Video" and d.get("AudioCodec"):
-                d["AudioCodec"] = keep
         for tp in (dp.get("TranscodingProfiles") or []):
             if tp.get("Type") == "Video":
                 tp["MaxAudioChannels"] = ch

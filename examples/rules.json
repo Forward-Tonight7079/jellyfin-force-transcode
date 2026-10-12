@@ -22,6 +22,11 @@
       "match": { "device_id": "0123456789abcdef" },
       "keep_video_codecs": "h264" },
 
+    { "name": "lg-tv-no-opus",
+      "match": { "device_id": "fedcba9876543210fedcba9876543210" },
+      "keep_audio_codecs": "aac,ac3,eac3",
+      "transcode_audio_codec": "aac" },
+
     { "name": "everything-else",
       "match": {},
       "max_audio_channels": 2 }

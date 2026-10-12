@@ -142,6 +142,56 @@ def test_apply_keep_video_codecs():
     # audio untouched
     assert dp["DirectPlayProfiles"][0]["AudioCodec"] == "aac,eac3"
 
+def dp_lg_opus():
+    # Shape of a TV profile that claims Opus for direct play and for transcode (copy).
+    return {"DirectPlayProfiles": [{"Type": "Video", "Container": "mkv", "VideoCodec": "h264,hevc",
+                                    "AudioCodec": "aac,ac3,eac3,opus"},
+                                   {"Type": "Video", "Container": "webm"},
+                                   {"Type": "Audio", "Container": "opus"}],
+            "TranscodingProfiles": [{"Type": "Video", "Container": "ts", "AudioCodec": "opus,aac,ac3,eac3"},
+                                    {"Type": "Audio", "Container": "opus", "AudioCodec": "opus"}],
+            "CodecProfiles": []}
+
+def test_keep_audio_codecs_alone():
+    dp = dp_lg_opus()
+    assert engine.apply_rule({"keep_audio_codecs": "aac,ac3,eac3"}, dp) is True
+    # every video entry gets the list, also an entry that had no AudioCodec (= any codec)
+    assert dp["DirectPlayProfiles"][0]["AudioCodec"] == "aac,ac3,eac3"
+    assert dp["DirectPlayProfiles"][1]["AudioCodec"] == "aac,ac3,eac3"
+    # audio-only profiles (music) are untouched
+    assert "AudioCodec" not in dp["DirectPlayProfiles"][2]
+    # no channel limit: no downmix, no VideoAudio condition
+    assert "MaxAudioChannels" not in dp["TranscodingProfiles"][0]
+    assert not any(c.get("Type") == "VideoAudio" for c in dp["CodecProfiles"])
+    # video untouched
+    assert dp["DirectPlayProfiles"][0]["VideoCodec"] == "h264,hevc"
+    assert "MaxStreamingBitrate" not in dp
+
+def test_transcode_audio_codec():
+    dp = dp_lg_opus()
+    assert engine.apply_rule({"transcode_audio_codec": "eac3,aac"}, dp) is True
+    assert dp["TranscodingProfiles"][0]["AudioCodec"] == "eac3,aac"
+    # audio-only transcode profile (music) is untouched
+    assert dp["TranscodingProfiles"][1]["AudioCodec"] == "opus"
+    # direct play is untouched
+    assert dp["DirectPlayProfiles"][0]["AudioCodec"] == "aac,ac3,eac3,opus"
+
+def test_lg_opus_case():
+    # Real case: a TV claims Opus but stutters. Block Opus, send AAC, keep 5.1 and the video.
+    dp = dp_lg_opus()
+    rule = {"keep_audio_codecs": "aac,ac3,eac3", "transcode_audio_codec": "aac"}
+    assert engine.apply_rule(rule, dp) is True
+    assert "opus" not in dp["DirectPlayProfiles"][0]["AudioCodec"]
+    assert dp["TranscodingProfiles"][0]["AudioCodec"] == "aac"
+    assert "MaxAudioChannels" not in dp["TranscodingProfiles"][0]
+    assert dp["DirectPlayProfiles"][0]["VideoCodec"] == "h264,hevc"
+
+def test_channels_with_explicit_keep():
+    dp = dp_basic()
+    engine.apply_rule({"max_audio_channels": 6, "keep_audio_codecs": "aac,eac3"}, dp)
+    assert dp["DirectPlayProfiles"][0]["AudioCodec"] == "aac,eac3"
+    assert dp["TranscodingProfiles"][0]["MaxAudioChannels"] == "6"
+
 def test_keep_video_codecs_ignores_entries_without_videocodec():
     dp = {"DirectPlayProfiles": [{"Type": "Video", "AudioCodec": "aac"}],
           "TranscodingProfiles": [], "CodecProfiles": []}
@@ -172,6 +222,10 @@ def test_describe_rule_lists_all_fields():
 
 def test_describe_rule_audio_default_keep():
     assert engine.describe_rule({"max_audio_channels": 2}) == "maxch=2 keepac=aac,mp3"
+
+def test_describe_rule_audio_codecs_without_channels():
+    rule = {"keep_audio_codecs": "aac,eac3", "transcode_audio_codec": "aac"}
+    assert engine.describe_rule(rule) == "keepac=aac,eac3 transac=aac"
 
 def test_describe_rule_only_present_fields():
     assert engine.describe_rule({"max_video_bit_depth": 8}) == "maxbits=8"

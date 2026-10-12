@@ -14,12 +14,13 @@ from the server. It is not a plugin. It does not change Jellyfin. It does not ch
 - [Why this exists](#why-this-exists) · [Do you even need this?](#do-you-even-need-this)
 - [What it solves](#what-it-solves-common-cases) · [How it works](#how-it-works) · [Compatibility](#compatibility)
 - [Quick start](#quick-start) · [Configuration](#configuration-rulesjson) · [Logging](#logging)
+- [Real cases](#real-cases)
 - [Troubleshooting](#troubleshooting) · [License](#license)
 
 ## Why this exists
 
 Jellyfin decides to **transcode** or to **direct-play** from the *client's* device profile. Jellyfin
-trusts the client. Two things are still difficult to force from the server:
+trusts the client. Some things are still difficult to force from the server:
 
 - **Force audio to stereo.** In the past, Jellyfin ignored the setting "Maximum Allowed Audio
   Channels" for direct play ([jellyfin-web#5715](https://github.com/jellyfin/jellyfin-web/issues/5715)).
@@ -34,6 +35,9 @@ trusts the client. Two things are still difficult to force from the server:
   bitrate limit. So a device that direct-plays a codec badly (for example, a Fire TV that stutters on
   HEVC, [forum](https://forum.jellyfin.org/t-force-trasnscoding-or-disable-directplay-x265-stuttering-firetv))
   has no clean fix for one device.
+- **Block one audio codec for one device.** A TV can report that it plays a codec (for example, Opus),
+  but the audio then stutters. Jellyfin has no setting to stop direct play of one audio codec for one
+  client.
 
 This proxy changes only one request — the request where this negotiation occurs (`PlaybackInfo`). The
 server then transcodes what you specify — audio, video, or both — for the clients that you select.
@@ -61,6 +65,8 @@ Use this proxy when those options are not available or not sufficient. For examp
 - **Multichannel audio freezes or gives no sound** — force a stereo downmix.
 - **Stereo-only speakers** — always downmix to 2 channels.
 - **A device stutters or fails on a codec that it reports as supported** — force it to transcode video.
+- **The audio stutters on one codec (for example, Opus) that the TV reports as supported** — send AAC
+  or E-AC-3 instead. The video and the channel count stay the same. See [Real cases](#real-cases).
 - **Playback buffers on a slow or remote link** — set a bitrate limit, so the server transcodes down.
 - **Small screens** — set a resolution limit (for example, 720p) instead of full resolution.
 - **Any client, not only the Android app** — this includes players that give you no setting for
@@ -80,7 +86,8 @@ flowchart LR
 
 - The proxy sends all requests to Jellyfin without changes, except `POST .../PlaybackInfo`.
 - For that request, the addon rewrites the client's `DeviceProfile`. It can limit audio channels,
-  video width, and bitrate. It changes only the values that you set. Audio and video are independent.
+  audio codecs, video codecs, video width, bit depth, and bitrate. It changes only the values that you
+  set. Audio and video are independent.
 - Jellyfin then reads the changed profile and **transcodes**.
 - Video segments, WebSocket, and images pass through without changes.
 - **Neutral and fail-safe:** with no rules, the proxy changes nothing. On any error, it sends the
@@ -182,8 +189,9 @@ only the address of your Jellyfin. This example has several profiles:
 
 | Field | Effect |
 |---|---|
-| `max_audio_channels` | Downmix target. `2` = stereo. Forces **audio** transcode. Omit it to keep the audio. |
-| `keep_audio_codecs` | Codecs that a client may still direct-play (default `aac,mp3`). Used only with `max_audio_channels`. |
+| `max_audio_channels` | Downmix target. `2` = stereo. Forces **audio** transcode. Omit it to keep the channels. |
+| `keep_audio_codecs` | Audio codecs that a client may direct-play (for example, `aac,ac3,eac3`). Other audio codecs are transcoded. With `max_audio_channels`, the default is `aac,mp3`. Alone, it keeps the channel count. |
+| `transcode_audio_codec` | Audio codec(s) that the server may send when it transcodes or remuxes (for example, `aac` or `eac3,aac`; the first one is preferred). Use it with `keep_audio_codecs`. If you omit it, the client's own list applies, and the server can copy the blocked codec without a change. |
 | `max_bitrate` | Limit for the total stream bitrate, in bits per second (for example, `6000000`). Forces **video** transcode when the source is higher. |
 | `max_width` | Limit for the transcode width, in pixels (for example, `1280` = 720p). Forces a downscale for wider video. |
 | `max_video_bit_depth` | Limit for the video bit depth (for example, `8`). Forces **video** transcode when the source is deeper, such as 10-bit HEVC. |
@@ -240,6 +248,42 @@ Example formats:
 The addon re-reads the file when it changes. You do not need to restart. To use a different path for
 the rules file, set `RULES_FILE`.
 
+## Real cases
+
+### LG TV: the audio stutters on Opus
+
+**Problem.** An LG TV (webOS) reports that it plays Opus audio. Jellyfin direct-plays such files. The
+audio then stutters badly. When the user lowers the bitrate in the player, the server transcodes the
+audio to AAC, and the audio is good. But then the video is transcoded too, and its quality is lower.
+(A user reported this case on Reddit.)
+
+**Fix.** Tell Jellyfin that this TV cannot direct-play Opus, and that the server must send AAC. The
+server then transcodes only the audio. It copies the video without a change, so the CPU load is small.
+The channel count stays the same (5.1 stays 5.1).
+
+```json
+{ "rules": [
+    { "name": "lg-tv-no-opus",
+      "match": { "device_id": "<the TV's device_id from the log>" },
+      "keep_audio_codecs": "aac,ac3,eac3",
+      "transcode_audio_codec": "aac" }
+] }
+```
+
+- `keep_audio_codecs` removes Opus from the codecs that the TV may direct-play. Files with AAC, AC-3,
+  or E-AC-3 audio still direct-play.
+- `transcode_audio_codec` makes the server send AAC. Without it, the server can make a remux and copy
+  the Opus audio, because the TV also lists Opus for transcoding. (A test on Jellyfin 12.1 showed this
+  with fMP4 HLS: the server sent Opus again. With `"transcode_audio_codec": "aac"`, it sent AAC.)
+  If your TV or soundbar plays E-AC-3 well, use `"eac3,aac"`.
+- To find the `device_id`, play one title on the TV and read the `PlaybackInfo from …` line in the log.
+
+**Verify.** Play a file with Opus audio. In **Dashboard → Playback**, the video must show *direct
+stream*, and the audio must show *transcoding* to AAC.
+
+The same rule works for any other audio codec that a device reports but plays badly (for example,
+`dts` or `truehd`).
+
 ## Logging
 
 The container writes its logs to stdout. Read them with `docker logs -f jellyfin-force-transcode`. The
@@ -256,6 +300,7 @@ In `events` mode the proxy writes two useful lines:
 ```
 jft: PlaybackInfo from client='Jellyfin for Android' device_id='a1b2…' user_id='3f2a…' user_agent='…'
 jft: rewrote PlaybackInfo rule=kids-tablet (maxch=2 keepac=aac,mp3 maxw=1344 maxbr=6000000 maxbits=8) client='Jellyfin for Android'
+jft: rewrote PlaybackInfo rule=lg-tv-no-opus (keepac=aac,ac3,eac3 transac=aac) client='…'
 ```
 
 - The **`PlaybackInfo from …`** line prints one time for each new client. It shows the exact values that
@@ -273,6 +318,11 @@ so they do not grow without a limit.
 `rewrote PlaybackInfo` line. If it is not there, find the `PlaybackInfo from …` line instead. It shows
 the exact `client` and `device_id` that the proxy parsed. Copy those values into your `match`. A plain
 `client` value must be an exact match; or use a `/regex/`.
+
+**The video plays, but the audio is still the codec that I blocked.** The server made a remux and
+copied the audio, because the client's transcode list includes that codec. Add `transcode_audio_codec`
+(for example, `"aac"`) to the rule. In **Dashboard → Playback**, the audio must show *transcoding*, not
+*direct stream*.
 
 **The audio is still multichannel.** Make sure that the matched rule sets `max_audio_channels`. A
 video-only rule keeps the audio. Also confirm that the traffic goes through the proxy. The client's
