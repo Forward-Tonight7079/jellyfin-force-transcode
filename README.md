@@ -38,8 +38,8 @@ trusts the client. When a client reports more than it can play, the server has f
 This proxy changes only one request: the request where this negotiation occurs (`PlaybackInfo`). The
 server then transcodes the audio, the video, or both, for the clients that you select.
 
-> I made this tool because a kids' tablet froze on every movie with 5.1 or 7.1 audio. I did not want
-> to re-encode all my files.
+> I made this tool because a kids' tablet froze on many movies with 7.1 audio. I did not want to
+> re-encode all my files. See the [kids tablet case](#kids-tablet-the-video-freezes-on-71-audio).
 
 ### Do you need this proxy?
 
@@ -64,14 +64,14 @@ Find your symptom in the table. Then use the field in the second column. The
 
 | Symptom | Rule field | Real case |
 |---|---|---|
-| Multichannel audio (5.1, 7.1) freezes or gives no sound | `"audio": { "max_channels": 2 }` | — |
+| Multichannel audio (5.1, 7.1) freezes or gives no sound | `"audio": { "max_channels": 2 }` | [Kids tablet + 7.1](#kids-tablet-the-video-freezes-on-71-audio) |
 | Stereo-only speakers | `"audio": { "max_channels": 2 }` | — |
 | The audio stutters on one codec that the device reports as supported | `"audio": { "deny": ["opus"] }` | [LG TV + Opus](#lg-tv-the-audio-stutters-on-opus) |
 | The player crashes or stutters on 10-bit video | `"video": { "max_bit_depth": 8 }` | [Fire tablet + 10-bit HEVC](#fire-tablet-the-player-crashes-on-10-bit-hevc) |
 | The device plays one video codec badly, at any bit depth | `"video": { "deny": ["hevc"] }` | — |
 | An old device plays only a few codecs | `"video": { "allow": ["h264"] }`, `"audio": { "allow": ["aac"] }` | — |
 | Playback buffers on a slow or remote link | `"max_bitrate": 6000000` | — |
-| A small screen gets full-resolution video | `"video": { "max_width": 1280 }` | — |
+| A small screen gets full-resolution video | `"video": { "max_width": 1280 }` | [Kids tablet + 7.1](#kids-tablet-the-video-freezes-on-71-audio) |
 
 This works for any client, also for players that give you no setting for channels, codecs, bitrate,
 or resolution. Did the proxy fix a different problem for you? Open an issue, so it can become a real
@@ -301,7 +301,49 @@ for the rules file, set `RULES_FILE`.
 
 ## Real cases
 
-Real users told us about each case below.
+Each case below is from a real setup. The first case is the reason for this proxy. Users told us
+about the other cases.
+
+### Kids tablet: the video freezes on 7.1 audio
+
+**Problem 1: audio.** A kids' tablet (Xiaomi Pad, 8.7-inch screen, 1340 × 800 pixels) uses the
+"Jellyfin for Android" app with the integrated player (ExoPlayer). Only this player has
+Picture-in-Picture. The player tells the server that it plays multichannel E-AC-3. For a movie with 7.1
+audio, the server transcodes the video but copies the audio. The tablet cannot play this audio, and
+the video freezes.
+
+On 17 movies with 7.1 audio, 9 froze, 2 gave an error, and 6 played. Each movie with E-AC-3 7.1 audio
+froze. The Web Player of the app gets stereo audio, but it has no Picture-in-Picture.
+
+**Problem 2: direct play on a small screen.** Some files (for example, 1080p video with AAC stereo
+audio) direct-play at the full bitrate, such as 41 Mbps. On an 8.7-inch screen, the picture is not
+better, but the playback starts slowly.
+
+**Fix.** One rule for the app:
+
+```json
+{ "rules": [
+    { "name": "kids-tablet",
+      "match": { "client": "Jellyfin for Android" },
+      "audio": { "max_channels": 2, "allow": ["aac", "mp3"] },
+      "video": { "max_width": 1344 },
+      "max_bitrate": 6000000 }
+] }
+```
+
+- `audio.max_channels: 2` makes the server downmix the audio to stereo.
+- `audio.allow` makes sure that the tablet gets only AAC or MP3, not E-AC-3.
+- `video.max_width: 1344` is near the panel width (1340 pixels). Wider video gives no more detail on
+  this screen.
+- `max_bitrate: 6000000` (6 Mbps) is sufficient for this screen, and the playback starts quickly.
+
+The integrated player stays, so Picture-in-Picture works. The media files do not change.
+
+**Verify.** Play a movie with 7.1 audio. The proxy log must show the audio as `aac 2ch`:
+
+```
+jft: playback client='Jellyfin for Android' rule=kids-tablet audio(allow=aac,mp3 max_channels=2) video(max_width=1344) max_bitrate=6000000 -> transcode: video -> h264, audio -> aac 2ch (…)
+```
 
 ### LG TV: the audio stutters on Opus
 
