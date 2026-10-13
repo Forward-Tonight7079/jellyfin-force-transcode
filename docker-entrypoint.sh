@@ -29,7 +29,7 @@ case "$LOG" in
   *)     LOG="events"; FLOW="--set flow_detail=0 --set termlog_verbosity=warn" ;;
 esac
 
-[ "$LOG" != "quiet" ] && echo "jellyfin-force-transcode -> ${JELLYFIN_URL} | listen :${LISTEN_PORT} | rules: ${RULES_FILE:-/addon/rules.json} (none mounted = passthrough) | log: ${LOG}"
+[ "$LOG" != "quiet" ] && echo "jellyfin-force-transcode -> ${JELLYFIN_URL} | listen :${LISTEN_PORT} | rules: ${RULES_FILE:-/addon/rules.json} | log: ${LOG}"
 
 # EXTRA_ARGS lets power users append raw mitmdump flags; left unquoted on purpose.
 exec mitmdump \

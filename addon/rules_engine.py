@@ -10,7 +10,8 @@ log = logging.getLogger("force-transcode")
 
 _FLAGS = {"i": re.I, "s": re.S, "m": re.M, "x": re.X}
 _re_cache = {}
-_file_cache = {}  # path -> (mtime, rules)
+_file_cache = {}  # path -> (mtime, rules)  (last good rules)
+_file_state = {}  # path -> last reported state, so each state is logged one time
 
 
 # --- matching -------------------------------------------------------------
@@ -287,20 +288,86 @@ def apply_rule(rule, dp):
     return changed
 
 
+def _report(path, key, level, msg):
+    """Log msg only when the state of the rules file changes."""
+    if _file_state.get(path) == key:
+        return
+    _file_state[path] = key
+    log.log(level, msg)
+
+
 def load_rules(path):
-    """Read rules from a JSON file (mtime-cached). Missing/broken => [] (passthrough)."""
+    """Read rules from a JSON file (mtime-cached). Missing => [] (passthrough).
+    A broken file keeps the last good rules. Each state change is logged one time."""
     try:
         st = os.stat(path)
-        ent = _file_cache.get(path)
-        if ent is None or ent[0] != st.st_mtime:
-            with open(path) as f:
-                rules = json.load(f).get("rules", [])
-            _file_cache[path] = (st.st_mtime, rules)
-            log.info("loaded %d rule(s) from %s" % (len(rules), path))
-        return _file_cache[path][1]
     except FileNotFoundError:
+        _file_cache.pop(path, None)
+        _report(path, "missing", logging.INFO,
+                "no rules file at %s: passthrough (the proxy changes nothing)" % path)
         return []
+    ent = _file_cache.get(path)
+    if ent is not None and ent[0] == st.st_mtime:
+        return ent[1]
+    try:
+        with open(path) as f:
+            rules = json.load(f).get("rules", [])
+        if not isinstance(rules, list):
+            raise ValueError('"rules" must be a list')
     except Exception as e:
-        log.warning("rules file error (%s); passthrough" % e)
-        ent = _file_cache.get(path)
-        return ent[1] if ent else []
+        prev = ent[1] if ent else []
+        keep = ("keeping the previous %d rule(s)" % len(prev)) if prev else "passthrough (no rules active)"
+        _report(path, ("error", st.st_mtime), logging.WARNING,
+                "rules file error in %s: %s; %s" % (path, e, keep))
+        return prev
+    _file_cache[path] = (st.st_mtime, rules)
+    names = ", ".join(str(r.get("name", "?")) for r in rules if isinstance(r, dict))
+    _report(path, ("ok", st.st_mtime), logging.INFO,
+            "loaded %d rule(s) from %s: %s" % (len(rules), path, names or "-"))
+    return rules
+
+
+# --- Jellyfin decision (PlaybackInfo response) -------------------------------
+
+def _is_video_reason(r):
+    return (r.startswith("Video") or r.startswith("UnknownVideo") or r in (
+        "ContainerBitrateExceedsLimit", "SubtitleCodecNotSupported", "RefFramesNotSupported",
+        "AnamorphicVideoNotSupported", "InterlacedVideoNotSupported"))
+
+
+def _is_audio_reason(r):
+    return r.startswith("Audio") or r.startswith("SecondaryAudio") or r.startswith("UnknownAudio")
+
+
+def describe_outcome(resp):
+    """One short phrase for what Jellyfin decided, from a PlaybackInfo response body.
+    Returns None if the body has no usable media source."""
+    if not isinstance(resp, dict):
+        return None
+    if resp.get("ErrorCode"):
+        return "error %s" % resp["ErrorCode"]
+    sources = resp.get("MediaSources") or []
+    if not sources or not isinstance(sources[0], dict):
+        return None
+    ms = sources[0]
+    if ms.get("SupportsDirectPlay"):
+        return "direct play"
+    url = ms.get("TranscodingUrl") or ""
+    if not url:
+        return "direct stream" if ms.get("SupportsDirectStream") else None
+    q = {}
+    if "?" in url:
+        for kv in url.split("?", 1)[1].split("&"):
+            k, _, v = kv.partition("=")
+            q[k.lower()] = unquote_plus(v)
+    reasons = [r for r in q.get("transcodereasons", "").split(",") if r]
+    if not reasons:
+        return "remux (video and audio copied)"
+    vcodec = codec_list(q.get("videocodec"))[:1]
+    acodec = codec_list(q.get("audiocodec"))[:1]
+    video = ("video -> %s" % vcodec[0]) if vcodec and any(map(_is_video_reason, reasons)) else "video copied"
+    audio = ("audio -> %s" % acodec[0]) if acodec and any(map(_is_audio_reason, reasons)) else "audio copied"
+    ch = q.get("transcodingmaxaudiochannels")
+    if ch and audio != "audio copied":
+        audio += " %sch" % ch
+    return "transcode: %s, %s (%s)" % (video, audio, ", ".join(reasons))

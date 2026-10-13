@@ -156,10 +156,16 @@ Do these steps:
 
 ### Verify it works
 
-Play a title on that client. Then open Jellyfin **Dashboard → Playback** (active streams), or read the
-server log. You must see a transcode with the limit that you set — for example, `-ac 2` for stereo, or
-`scale` / `-maxrate` for video. If the client direct-plays, the rule did not match. Check the client
-name (see below).
+Run `docker logs -f jellyfin-force-transcode`. At startup, the proxy writes `loaded N rule(s)` and a
+warning for each misspelled field. Then play a title on the client. The proxy writes one line with the
+rule and with the decision of Jellyfin:
+
+```
+jft: playback client='Jellyfin Android TV' rule=fire-tv audio(max_channels=2) video(max_width=1920) max_bitrate=8000000 -> transcode: video -> h264, audio -> aac 2ch (AudioChannelsNotSupported)
+```
+
+If the line shows `rule=none`, the rule did not match. Check the client name (see
+[How matching works](#how-matching-works)).
 
 ## Configuration (rules.json)
 
@@ -316,8 +322,11 @@ audio to AAC, and the audio is good. But then the video is transcoded too, and i
   a codec from the TV's list.
 - To find the `device_id`, play one title on the TV and read the `PlaybackInfo from …` line in the log.
 
-**Verify.** Play a file with Opus audio. In **Dashboard → Playback**, the video must show *direct
-stream*, and the audio must show *transcoding*.
+**Verify.** Play a file with Opus audio. The proxy log must show:
+
+```
+jft: playback client='…' rule=lg-tv-no-opus audio(deny=opus) -> transcode: video copied, audio -> aac (AudioCodecNotSupported)
+```
 
 The same rule works for any other audio codec that a device reports but plays badly (for example,
 `["dts", "truehd"]`).
@@ -338,8 +347,9 @@ The same rule works for any other audio codec that a device reports but plays ba
 ] }
 ```
 
-The server transcodes only the 10-bit files (the Jellyfin log shows `play_method = Transcode (v:h264 a:direct)`).
-8-bit HEVC still direct-plays. `"video": { "deny": ["hevc"] }` also stops the crash, but it transcodes
+The server transcodes only the 10-bit files. For a 10-bit file the proxy log shows
+`-> transcode: video -> h264, audio copied (VideoBitDepthNotSupported)`, and for an 8-bit file it shows
+`-> direct play`. `"video": { "deny": ["hevc"] }` also stops the crash, but it transcodes
 all HEVC, also the files that play well.
 
 ## Logging
@@ -349,37 +359,46 @@ The container writes its logs to stdout. Read them with `docker logs -f jellyfin
 
 | `LOG` | Output |
 |---|---|
-| `events` (default) | Only the important lines: startup, `loaded N rule(s)`, each new `PlaybackInfo from …` identity, each `rewrote PlaybackInfo …`, and warnings. It stays quiet on a busy server. |
+| `events` (default) | Only the important lines: startup, rules file changes, each new `PlaybackInfo from …` identity, one `playback …` line for each playback, and warnings. It stays quiet on a busy server. |
 | `full` | Everything that mitmproxy sees — one line for each request (this includes video segments). Use it to debug. |
 | `quiet` | Silent (errors only). |
 
-In `events` mode the proxy writes two useful lines:
+In `events` mode the log looks like this:
 
 ```
+jft: loaded 2 rule(s) from /addon/rules.json: kids-tablet, lg-tv-no-opus
+jft: rule=lg-tv-no-opus: unknown field audio.denny (ignored)
 jft: PlaybackInfo from client='Jellyfin for Android' device_id='a1b2…' user_id='3f2a…' user_agent='…'
-jft: rewrote PlaybackInfo rule=kids-tablet (audio(max_channels=2) video(max_width=1344 max_bit_depth=8) max_bitrate=6000000) client='Jellyfin for Android'
-jft: rewrote PlaybackInfo rule=lg-tv-no-opus (audio(deny=opus)) client='…'
-jft: rule=old-tablet: deprecated field max_audio_channels -> use audio.max_channels
-jft: rule=my-tv: unknown field audio.denny (ignored)
+jft: playback client='Jellyfin for Android' rule=kids-tablet audio(max_channels=2) video(max_width=1344) max_bitrate=6000000 -> transcode: video -> h264, audio -> aac 2ch (AudioChannelsNotSupported, ContainerBitrateExceedsLimit)
+jft: playback client='Jellyfin Web' rule=none -> direct play
+jft: rules file error in /addon/rules.json: Illegal trailing comma before end of array: line 4 column 1 (char 222); keeping the previous 2 rule(s)
 ```
 
-- The **`PlaybackInfo from …`** line prints one time for each new client. It shows the exact values that
-  the proxy parsed. **Copy these values into a rule `match`.** They can differ from the Jellyfin
-  dashboard, so this line is the surest source.
-- The **`rewrote PlaybackInfo …`** line shows which rule matched and every cap that it applied.
-- A **`rule=… deprecated field`** or **`unknown field`** warning prints one time for each rule. A
-  deprecated field still works. An unknown field (for example, a typing error) does nothing.
+- **`loaded N rule(s)`** prints at startup and each time that you save `rules.json`. The proxy checks
+  the file every 2 seconds, so you see a change at once. You do not need to restart.
+- **`rules file error`** prints one time for each broken save. It gives the line and column. The proxy
+  keeps the previous good rules until you correct the file.
+- **`rule=… deprecated field`** or **`unknown field`** prints one time for each rule. A deprecated field
+  still works. An unknown field (for example, a typing error) does nothing.
+- **`PlaybackInfo from …`** prints one time for each new client. It shows the exact values that the
+  proxy parsed. **Copy these values into a rule `match`.** They can differ from the Jellyfin dashboard,
+  so this line is the surest source.
+- **`playback …`** prints for each playback. It shows the rule (or `rule=none`), the caps that the rule
+  applied, and the decision of Jellyfin: `direct play`, `remux`, or `transcode` with the reasons. For a
+  transcode, it shows each stream: `video copied` or `video -> h264`, `audio copied` or `audio -> aac 2ch`.
 
-The proxy writes only the rule name, the parsed identity, and the caps that it applied. It never writes
+The proxy writes only the rule name, the parsed identity, the caps that it applied, and the decision
+of Jellyfin. It never writes
 tokens, credentials, or media content. Docker rotates the logs (with the standard `json-file` driver),
 so they do not grow without a limit.
 
 ## Troubleshooting
 
-**The client direct-plays. Nothing transcodes.** The rule did not match. Set `LOG=events`. Look for a
-`rewrote PlaybackInfo` line. If it is not there, find the `PlaybackInfo from …` line instead. It shows
-the exact `client` and `device_id` that the proxy parsed. Copy those values into your `match`. A plain
-`client` value must be an exact match; or use a `/regex/`.
+**The client direct-plays. Nothing transcodes.** Find the `playback …` line for that client. If it
+shows `rule=none`, the rule did not match. The `PlaybackInfo from …` line shows the exact `client` and
+`device_id` that the proxy parsed. Copy those values into your `match`. A plain `client` value must be
+an exact match; or use a `/regex/`. If there is no `playback …` line at all, the client does not use the
+proxy (see below).
 
 **The rule matches, but nothing changes.** Look for an `unknown field` warning in the log. A misspelled
 field (for example, `audio.denny`) does nothing.
@@ -392,9 +411,9 @@ server address must be `http://<host>:8097`, not Jellyfin directly.
 reachable Jellyfin (`http://IP:8096`). For HTTPS or remote access, make sure that your outer reverse
 proxy forwards WebSockets.
 
-**How do I confirm that it works?** Play a title. Then open **Dashboard → Playback** (active streams),
-or read the server log. You must see a transcode with your limit (`-ac 2`, or `scale` / `-maxrate` for
-video).
+**How do I confirm that it works?** Play a title and read the `playback …` line in the proxy log. It
+shows the decision of Jellyfin for that playback. **Dashboard → Playback** (active streams) in Jellyfin
+shows the same decision.
 
 **Playback stopped after a Jellyfin upgrade.** The PlaybackInfo format may have changed. Set
 `LOG=full`. Capture a `POST .../PlaybackInfo`. Then open an issue.

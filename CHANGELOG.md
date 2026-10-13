@@ -3,6 +3,23 @@
 This file lists all notable changes to the project. It follows
 [Keep a Changelog](https://keepachangelog.com/) and [Semantic Versioning](https://semver.org/).
 
+## [1.1.0] - 2026-10-13
+
+### Added
+- One `playback …` log line for each PlaybackInfo: the client, the rule (or `rule=none`), the caps,
+  and the decision of Jellyfin from its answer — `direct play`, `remux`, or `transcode` with each
+  stream (`video copied` / `video -> h264`, `audio -> aac 2ch`) and the reasons. You no longer need
+  the Jellyfin dashboard to confirm that a rule works.
+- The proxy reads and checks `rules.json` at startup and then every 2 seconds. `loaded N rule(s)` (with
+  the rule names) and warnings about misspelled fields appear at once, not at the next playback.
+
+### Changed
+- The `playback …` line replaces the `rewrote PlaybackInfo …` line.
+- A broken `rules.json` gives one warning with the line and column, and says that the previous good
+  rules stay active. Before, the warning repeated on each request and said "passthrough".
+- The startup line no longer says "(none mounted = passthrough)" when a file is mounted. The addon
+  reports the real state of the rules file.
+
 ## [1.0.0] - 2026-10-13
 
 ### Added
@@ -90,6 +107,7 @@ This file lists all notable changes to the project. It follows
 - Multi-arch image (linux/amd64, linux/arm64) published to GHCR by CI; pytest test suite gating the
   build.
 
+[1.1.0]: https://github.com/Forward-Tonight7079/jellyfin-force-transcode/releases/tag/v1.1.0
 [1.0.0]: https://github.com/Forward-Tonight7079/jellyfin-force-transcode/releases/tag/v1.0.0
 [0.3.0]: https://github.com/Forward-Tonight7079/jellyfin-force-transcode/releases/tag/v0.3.0
 [0.2.2]: https://github.com/Forward-Tonight7079/jellyfin-force-transcode/releases/tag/v0.2.2

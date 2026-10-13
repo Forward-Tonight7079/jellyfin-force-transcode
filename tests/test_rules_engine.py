@@ -297,3 +297,67 @@ def test_load_rules_broken_json(tmp_path):
     p = tmp_path / "b.json"
     p.write_text("{not json")
     assert engine.load_rules(str(p)) == []
+
+def test_load_rules_logs_each_state_once(tmp_path, caplog):
+    import logging, os
+    caplog.set_level(logging.INFO, logger="force-transcode")
+    p = tmp_path / "r.json"
+    engine.load_rules(str(p))
+    engine.load_rules(str(p))
+    assert sum("no rules file" in m for m in caplog.messages) == 1
+    p.write_text('{"rules":[{"name":"a"},{"name":"b"}]}')
+    engine.load_rules(str(p)); engine.load_rules(str(p))
+    assert sum("loaded 2 rule(s)" in m and ": a, b" in m for m in caplog.messages) == 1
+
+def test_load_rules_error_keeps_previous_and_logs_once(tmp_path, caplog):
+    import logging, os
+    caplog.set_level(logging.INFO, logger="force-transcode")
+    p = tmp_path / "r.json"
+    p.write_text('{"rules":[{"name":"a"}]}')
+    assert len(engine.load_rules(str(p))) == 1
+    p.write_text('{"rules":[{"name":"a"},]}')
+    os.utime(p, (1, 1))   # make sure the mtime changes
+    for _ in range(3):
+        assert [r["name"] for r in engine.load_rules(str(p))] == ["a"]
+    errs = [m for m in caplog.messages if "rules file error" in m]
+    assert len(errs) == 1 and "keeping the previous 1 rule(s)" in errs[0]
+
+def test_load_rules_rules_not_a_list(tmp_path):
+    p = tmp_path / "r.json"
+    p.write_text('{"rules":{"name":"a"}}')
+    assert engine.load_rules(str(p)) == []
+
+
+# --- describe_outcome (Jellyfin decision) ----------------------------------
+
+def _resp(url=None, dp=False, ds=False):
+    ms = {"SupportsDirectPlay": dp, "SupportsDirectStream": ds}
+    if url:
+        ms["TranscodingUrl"] = url
+    return {"MediaSources": [ms]}
+
+def test_outcome_direct_play():
+    assert engine.describe_outcome(_resp(dp=True)) == "direct play"
+
+def test_outcome_audio_only_transcode():
+    url = ("/videos/x/master.m3u8?VideoCodec=h264,hevc,av1&AudioCodec=aac,ac3,eac3"
+           "&TranscodeReasons=AudioCodecNotSupported")
+    assert engine.describe_outcome(_resp(url)) == \
+        "transcode: video copied, audio -> aac (AudioCodecNotSupported)"
+
+def test_outcome_video_and_stereo():
+    url = ("/videos/x/master.m3u8?VideoCodec=h264&AudioCodec=aac&TranscodingMaxAudioChannels=2"
+           "&TranscodeReasons=VideoBitDepthNotSupported%2CAudioChannelsNotSupported")
+    assert engine.describe_outcome(_resp(url)) == \
+        "transcode: video -> h264, audio -> aac 2ch (VideoBitDepthNotSupported, AudioChannelsNotSupported)"
+
+def test_outcome_bitrate_is_video():
+    url = "/x?VideoCodec=h264&AudioCodec=aac&TranscodeReasons=ContainerBitrateExceedsLimit"
+    assert engine.describe_outcome(_resp(url)) == \
+        "transcode: video -> h264, audio copied (ContainerBitrateExceedsLimit)"
+
+def test_outcome_remux_and_errors():
+    assert engine.describe_outcome(_resp("/x?VideoCodec=h264")) == "remux (video and audio copied)"
+    assert engine.describe_outcome({"ErrorCode": "NoCompatibleStream"}) == "error NoCompatibleStream"
+    assert engine.describe_outcome({"MediaSources": []}) is None
+    assert engine.describe_outcome("junk") is None
