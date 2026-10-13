@@ -113,7 +113,9 @@ Do these steps:
    ```json
    { "rules": [ { "name": "fire-tv",
                   "match": { "client": "Jellyfin Android TV" },
-                  "max_audio_channels": 2, "max_width": 1920, "max_bitrate": 8000000 } ] }
+                  "audio": { "max_channels": 2 },
+                  "video": { "max_width": 1920 },
+                  "max_bitrate": 8000000 } ] }
    ```
 
    More examples (stereo for all clients, video only for one device, several profiles) are in
@@ -164,40 +166,72 @@ only the address of your Jellyfin. This example has several profiles:
   "rules": [
     { "name": "kids-account-any-device",
       "match": { "user_id": "3f2a1b4c5d6e7f8091a2b3c4d5e6f708" },
-      "max_audio_channels": 2 },
+      "audio": { "max_channels": 2 } },
+
+    { "name": "lg-tv-no-opus",
+      "match": { "device_id": "fedcba9876543210fedcba9876543210" },
+      "audio": { "deny": ["opus"] } },
+
+    { "name": "fire-tablet-no-10bit",
+      "match": { "client": "Jellyfin Android" },
+      "video": { "max_bit_depth": 8 } },
 
     { "name": "any-android-app",
       "match": { "client": "/Android/" },
-      "max_audio_channels": 2, "max_width": 1280, "max_bitrate": 6000000 },
-
-    { "name": "fire-tablet-force-10bit-hevc",
-      "match": { "client": "Jellyfin Android TV" },
-      "max_video_bit_depth": 8 },
-
-    { "name": "living-room-tv",
-      "match": { "device_id": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678" },
-      "max_bitrate": 20000000 },
+      "audio": { "max_channels": 2 },
+      "video": { "max_width": 1280 },
+      "max_bitrate": 6000000 },
 
     { "name": "everything-else",
       "match": {},
-      "max_audio_channels": 2 }
+      "audio": { "max_channels": 2 } }
   ]
 }
 ```
 
-**Transforms** — set only the fields that you want. Audio and video are independent:
+**Transforms.** A rule has two optional groups, `audio` and `video`, and one top-level field,
+`max_bitrate`. Set only the fields that you need. Audio and video are independent: an audio-only rule
+copies the video, and a video-only rule copies the audio.
 
 | Field | Effect |
 |---|---|
-| `max_audio_channels` | Downmix target. `2` = stereo. Forces **audio** transcode. Omit it to keep the channels. |
-| `keep_audio_codecs` | Audio codecs that a client may direct-play (for example, `aac,ac3,eac3`). Other audio codecs are transcoded. With `max_audio_channels`, the default is `aac,mp3`. Alone, it keeps the channel count. |
-| `transcode_audio_codec` | Audio codec(s) that the server may send when it transcodes or remuxes (for example, `aac` or `eac3,aac`; the first one is preferred). Use it with `keep_audio_codecs`. If you omit it, the client's own list applies, and the server can copy the blocked codec without a change. |
-| `max_bitrate` | Limit for the total stream bitrate, in bits per second (for example, `6000000`). Forces **video** transcode when the source is higher. |
-| `max_width` | Limit for the transcode width, in pixels (for example, `1280` = 720p). Forces a downscale for wider video. |
-| `max_video_bit_depth` | Limit for the video bit depth (for example, `8`). Forces **video** transcode when the source is deeper, such as 10-bit HEVC. |
-| `keep_video_codecs` | Video codecs that a client may direct-play (for example, `h264`). Other codecs are transcoded. |
+| `audio.deny` | Audio codecs that the server must always transcode (for example, `["opus"]`). The client does not direct-play them, and the server does not copy them in a remux. |
+| `audio.allow` | The only audio codecs that the client may direct-play (for example, `["aac", "mp3"]`). The server transcodes all other audio codecs. |
+| `audio.transcode_to` | Optional. The audio codec that the server sends when it transcodes (for example, `"aac"` or `"eac3"`). If you omit it, the server selects from the client's list, without the blocked codecs. |
+| `audio.max_channels` | Downmix target. `2` = stereo. The server transcodes audio with more channels. |
+| `video.deny` | Video codecs that the server must always transcode (for example, `["av1"]`). |
+| `video.allow` | The only video codecs that the client may direct-play (for example, `["h264"]`). |
+| `video.max_bit_depth` | Limit for the video bit depth (for example, `8`). The server transcodes deeper video, such as 10-bit HEVC. 8-bit video still direct-plays. |
+| `video.max_width` | Limit for the width, in pixels (for example, `1280` = 720p). The server downscales wider video. |
+| `max_bitrate` | Limit for the total stream bitrate, in bits per second (for example, `6000000`). The server transcodes the video when the source is higher. |
 
-A rule with none of these fields does nothing.
+**`deny` or `allow`?** Use `deny` when one codec is bad on a device ("Opus stutters"). It is short, and
+it changes nothing else. Use `allow` when a device can play only a few codecs ("only AAC"). If you set
+both, the client may direct-play the `allow` codecs minus the `deny` codecs.
+
+Write a codec list as a JSON array (`["aac", "mp3"]`) or as a comma string (`"aac,mp3"`). Both work.
+
+A rule with none of these fields does nothing. A misspelled field also does nothing, but the proxy
+writes a warning about it in the log (see [Logging](#logging)).
+
+### Upgrade from 0.x
+
+Version 1.0 moved the fields into the `audio` and `video` groups. **The old fields still work.** The
+proxy writes one warning for each old field, with the new name. Change your `rules.json` when you can:
+
+| 0.x field | 1.x field |
+|---|---|
+| `max_audio_channels` | `audio.max_channels` |
+| `keep_audio_codecs` | `audio.allow` |
+| `transcode_audio_codec` | `audio.transcode_to` |
+| `keep_video_codecs` | `video.allow` |
+| `max_video_bit_depth` | `video.max_bit_depth` |
+| `max_width` | `video.max_width` |
+| `max_bitrate` | `max_bitrate` (no change) |
+
+One difference: the old `max_audio_channels` field alone also limited direct play to AAC and MP3. The
+old field keeps this behaviour. The new `audio.max_channels` field only limits the channels. To get the
+old result, add `"allow": ["aac", "mp3"]`.
 
 ### How matching works
 
@@ -250,39 +284,58 @@ the rules file, set `RULES_FILE`.
 
 ## Real cases
 
+Each case below came from a real user report.
+
 ### LG TV: the audio stutters on Opus
 
 **Problem.** An LG TV (webOS) reports that it plays Opus audio. Jellyfin direct-plays such files. The
 audio then stutters badly. When the user lowers the bitrate in the player, the server transcodes the
 audio to AAC, and the audio is good. But then the video is transcoded too, and its quality is lower.
-(A user reported this case on Reddit.)
 
-**Fix.** Tell Jellyfin that this TV cannot direct-play Opus, and that the server must send AAC. The
-server then transcodes only the audio. It copies the video without a change, so the CPU load is small.
-The channel count stays the same (5.1 stays 5.1).
+**Fix.** One field: never direct-play Opus on this TV.
 
 ```json
 { "rules": [
     { "name": "lg-tv-no-opus",
       "match": { "device_id": "<the TV's device_id from the log>" },
-      "keep_audio_codecs": "aac,ac3,eac3",
-      "transcode_audio_codec": "aac" }
+      "audio": { "deny": ["opus"] } }
 ] }
 ```
 
-- `keep_audio_codecs` removes Opus from the codecs that the TV may direct-play. Files with AAC, AC-3,
-  or E-AC-3 audio still direct-play.
-- `transcode_audio_codec` makes the server send AAC. Without it, the server can make a remux and copy
-  the Opus audio, because the TV also lists Opus for transcoding. (A test on Jellyfin 12.1 showed this
-  with fMP4 HLS: the server sent Opus again. With `"transcode_audio_codec": "aac"`, it sent AAC.)
-  If your TV or soundbar plays E-AC-3 well, use `"eac3,aac"`.
+- The server transcodes only the audio. It copies the video without a change, so the CPU load is
+  small. The channel count stays the same (5.1 stays 5.1).
+- Files with other audio codecs (AAC, AC-3, E-AC-3) still direct-play.
+- `deny` also stops a remux that copies the Opus track. The TV also lists Opus for transcoding, so
+  without this the server can send Opus again. (A test on Jellyfin 12.1 with fMP4 HLS showed this.)
+- To select the output codec, add `"transcode_to": "eac3"` (or `"aac"`). Without it, the server selects
+  a codec from the TV's list.
 - To find the `device_id`, play one title on the TV and read the `PlaybackInfo from …` line in the log.
 
 **Verify.** Play a file with Opus audio. In **Dashboard → Playback**, the video must show *direct
-stream*, and the audio must show *transcoding* to AAC.
+stream*, and the audio must show *transcoding*.
 
 The same rule works for any other audio codec that a device reports but plays badly (for example,
-`dts` or `truehd`).
+`["dts", "truehd"]`).
+
+### Fire tablet: the player crashes on 10-bit HEVC
+
+**Problem.** A Fire tablet reports that it plays HEVC. It plays 8-bit HEVC well. But on 10-bit HEVC
+(`hevc (Main 10)`), Jellyfin direct-plays the file, and the player crashes with
+`NO_EXCEEDS_CAPABILITIES`.
+
+**Fix.** Limit the bit depth, not the codec:
+
+```json
+{ "rules": [
+    { "name": "fire-tablet-no-10bit",
+      "match": { "client": "Jellyfin Android" },
+      "video": { "max_bit_depth": 8 } }
+] }
+```
+
+The server transcodes only the 10-bit files (the Jellyfin log shows `play_method = Transcode (v:h264 a:direct)`).
+8-bit HEVC still direct-plays. `"video": { "deny": ["hevc"] }` also stops the crash, but it transcodes
+all HEVC, also the files that play well.
 
 ## Logging
 
@@ -299,14 +352,18 @@ In `events` mode the proxy writes two useful lines:
 
 ```
 jft: PlaybackInfo from client='Jellyfin for Android' device_id='a1b2…' user_id='3f2a…' user_agent='…'
-jft: rewrote PlaybackInfo rule=kids-tablet (maxch=2 keepac=aac,mp3 maxw=1344 maxbr=6000000 maxbits=8) client='Jellyfin for Android'
-jft: rewrote PlaybackInfo rule=lg-tv-no-opus (keepac=aac,ac3,eac3 transac=aac) client='…'
+jft: rewrote PlaybackInfo rule=kids-tablet (audio(max_channels=2) video(max_width=1344 max_bit_depth=8) max_bitrate=6000000) client='Jellyfin for Android'
+jft: rewrote PlaybackInfo rule=lg-tv-no-opus (audio(deny=opus)) client='…'
+jft: rule=old-tablet: deprecated field max_audio_channels -> use audio.max_channels
+jft: rule=my-tv: unknown field audio.denny (ignored)
 ```
 
 - The **`PlaybackInfo from …`** line prints one time for each new client. It shows the exact values that
   the proxy parsed. **Copy these values into a rule `match`.** They can differ from the Jellyfin
   dashboard, so this line is the surest source.
 - The **`rewrote PlaybackInfo …`** line shows which rule matched and every cap that it applied.
+- A **`rule=… deprecated field`** or **`unknown field`** warning prints one time for each rule. A
+  deprecated field still works. An unknown field (for example, a typing error) does nothing.
 
 The proxy writes only the rule name, the parsed identity, and the caps that it applied. It never writes
 tokens, credentials, or media content. Docker rotates the logs (with the standard `json-file` driver),
@@ -319,12 +376,10 @@ so they do not grow without a limit.
 the exact `client` and `device_id` that the proxy parsed. Copy those values into your `match`. A plain
 `client` value must be an exact match; or use a `/regex/`.
 
-**The video plays, but the audio is still the codec that I blocked.** The server made a remux and
-copied the audio, because the client's transcode list includes that codec. Add `transcode_audio_codec`
-(for example, `"aac"`) to the rule. In **Dashboard → Playback**, the audio must show *transcoding*, not
-*direct stream*.
+**The rule matches, but nothing changes.** Look for an `unknown field` warning in the log. A misspelled
+field (for example, `audio.denny`) does nothing.
 
-**The audio is still multichannel.** Make sure that the matched rule sets `max_audio_channels`. A
+**The audio is still multichannel.** Make sure that the matched rule sets `audio.max_channels`. A
 video-only rule keeps the audio. Also confirm that the traffic goes through the proxy. The client's
 server address must be `http://<host>:8097`, not Jellyfin directly.
 

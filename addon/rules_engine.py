@@ -71,6 +71,98 @@ def build_ctx(auth, user_agent, query_user_id, body):
             "user_agent": user_agent or "", "user_id": uid}
 
 
+# --- rule schema ----------------------------------------------------------
+#
+# 1.x schema: transforms live in two groups plus one top-level cap.
+#   "audio": {"allow", "deny", "transcode_to", "max_channels"}
+#   "video": {"allow", "deny", "max_width", "max_bit_depth"}
+#   "max_bitrate"
+# The flat 0.x fields still work. normalize() maps them and reports them, so the
+# log can show the new spelling.
+
+_AUDIO_KEYS = ("allow", "deny", "transcode_to", "max_channels")
+_VIDEO_KEYS = ("allow", "deny", "max_width", "max_bit_depth")
+_RULE_KEYS = ("name", "match", "audio", "video", "max_bitrate")
+
+# old flat field -> (group, new key)
+_DEPRECATED = {
+    "max_audio_channels":    ("audio", "max_channels"),
+    "keep_audio_codecs":     ("audio", "allow"),
+    "transcode_audio_codec": ("audio", "transcode_to"),
+    "keep_video_codecs":     ("video", "allow"),
+    "max_width":             ("video", "max_width"),
+    "max_video_bit_depth":   ("video", "max_bit_depth"),
+}
+
+_ALL_VIDEO = "h264,hevc,mpeg4,vp9,av1,vc1"
+_warned = set()
+
+
+def codec_list(value):
+    """A list or a comma string -> list of lower-case codecs. Empty -> []."""
+    if value is None:
+        return []
+    items = value if isinstance(value, list) else str(value).split(",")
+    return [str(c).strip().lower() for c in items if str(c).strip()]
+
+
+def _int(value):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
+def normalize(rule):
+    """Return (spec, notes). spec = {"audio": {...}, "video": {...}, "max_bitrate": int|None}.
+    notes = human-readable warnings (deprecated or unknown fields)."""
+    notes = []
+    audio = dict(rule.get("audio") or {}) if isinstance(rule.get("audio"), dict) else {}
+    video = dict(rule.get("video") or {}) if isinstance(rule.get("video"), dict) else {}
+    groups = {"audio": audio, "video": video}
+
+    for old, (grp, key) in _DEPRECATED.items():
+        if old in rule:
+            notes.append("deprecated field %s -> use %s.%s" % (old, grp, key))
+            groups[grp].setdefault(key, rule[old])
+    # 0.x behaviour: max_audio_channels alone also limited direct play to aac,mp3.
+    if "max_audio_channels" in rule and "keep_audio_codecs" not in rule:
+        audio.setdefault("allow", "aac,mp3")
+
+    for k in rule:
+        if k not in _RULE_KEYS and k not in _DEPRECATED:
+            notes.append("unknown field %s (ignored)" % k)
+    for grp, keys in (("audio", _AUDIO_KEYS), ("video", _VIDEO_KEYS)):
+        for k in groups[grp]:
+            if k not in keys:
+                notes.append("unknown field %s.%s (ignored)" % (grp, k))
+
+    spec = {
+        "audio": {"allow": codec_list(audio.get("allow")),
+                  "deny": codec_list(audio.get("deny")),
+                  "transcode_to": codec_list(audio.get("transcode_to")),
+                  "max_channels": _int(audio.get("max_channels"))},
+        "video": {"allow": codec_list(video.get("allow")),
+                  "deny": codec_list(video.get("deny")),
+                  "max_width": _int(video.get("max_width")),
+                  "max_bit_depth": _int(video.get("max_bit_depth"))},
+        "max_bitrate": _int(rule.get("max_bitrate")),
+    }
+    return spec, notes
+
+
+def rule_notes_once(rule):
+    """Warnings for a rule, only the first time that this rule content is seen."""
+    key = json.dumps(rule, sort_keys=True, default=str)
+    if key in _warned:
+        return []
+    _warned.add(key)
+    return normalize(rule)[1]
+
+
 # --- log helpers ----------------------------------------------------------
 
 def describe_ctx(ctx):
@@ -82,24 +174,19 @@ def describe_ctx(ctx):
 
 
 def describe_rule(rule):
-    """List the caps that a rule applies. This mirrors apply_rule."""
+    """List the caps that a rule applies, in the 1.x spelling. This mirrors apply_rule."""
+    spec, _ = normalize(rule)
     parts = []
-    ch = rule.get("max_audio_channels")
-    if ch is not None:
-        parts.append("maxch=%s" % ch)
-    keep = _keep_audio(rule)
-    if keep:
-        parts.append("keepac=%s" % keep)
-    if rule.get("transcode_audio_codec"):
-        parts.append("transac=%s" % rule["transcode_audio_codec"])
-    if isinstance(rule.get("max_width"), int):
-        parts.append("maxw=%s" % rule["max_width"])
-    if isinstance(rule.get("max_bitrate"), int):
-        parts.append("maxbr=%s" % rule["max_bitrate"])
-    if rule.get("keep_video_codecs"):
-        parts.append("keepvc=%s" % rule["keep_video_codecs"])
-    if isinstance(rule.get("max_video_bit_depth"), int):
-        parts.append("maxbits=%s" % rule["max_video_bit_depth"])
+    for grp in ("audio", "video"):
+        sub = []
+        for k, v in spec[grp].items():
+            if v is None or v == []:
+                continue
+            sub.append("%s=%s" % (k, ",".join(v) if isinstance(v, list) else v))
+        if sub:
+            parts.append("%s(%s)" % (grp, " ".join(sub)))
+    if spec["max_bitrate"] is not None:
+        parts.append("max_bitrate=%s" % spec["max_bitrate"])
     return " ".join(parts) if parts else "no-op"
 
 
@@ -112,79 +199,89 @@ def _codec_profiles(dp):
     return cps
 
 
-def _keep_audio(rule):
-    """Audio codecs that the client may direct-play, or None (no limit).
-    With max_audio_channels the default is aac,mp3; alone it applies only when set."""
-    if rule.get("keep_audio_codecs"):
-        return rule["keep_audio_codecs"]
-    if rule.get("max_audio_channels") is not None:
-        return "aac,mp3"
-    return None
+def _limit_codecs(dp, field, allow, deny, transcode_to, fallback, cp_type, never_cond):
+    """Apply allow/deny/transcode_to to one stream kind (field = AudioCodec or VideoCodec).
+
+    Direct play: the client may direct-play only allowed, not denied codecs.
+    Transcode:   the same limit applies to the client's transcode list, because
+                 Jellyfin copies the source stream (remux) when its codec is in that
+                 list. transcode_to, when set, replaces the list."""
+    open_entry = False
+    for d in (dp.get("DirectPlayProfiles") or []):
+        if d.get("Type") != "Video":
+            continue
+        cur = codec_list(d.get(field))
+        if allow:
+            cur = [c for c in cur if c in allow] if cur else list(allow)
+        if not cur:
+            open_entry = True   # no list = every codec; deny needs a codec profile
+            continue
+        d[field] = ",".join(c for c in cur if c not in deny)
+
+    if deny and open_entry:
+        # An entry without a codec list allows every codec. A condition that never
+        # holds makes Jellyfin treat the denied codecs as not direct-playable.
+        _codec_profiles(dp).append({"Type": cp_type, "Codec": ",".join(deny),
+                                    "Conditions": [dict(never_cond, IsRequired=True)]})
+
+    for tp in (dp.get("TranscodingProfiles") or []):
+        if tp.get("Type") != "Video":
+            continue
+        if transcode_to:
+            tp[field] = ",".join(transcode_to)
+            continue
+        cur = codec_list(tp.get(field))
+        if not cur:
+            continue
+        keep = [c for c in cur if c not in deny and (not allow or c in allow)]
+        # Nothing left in the client's list: send an allowed codec, else the fallback.
+        tp[field] = ",".join(keep or [c for c in allow if c not in deny] or [fallback])
 
 
 def apply_rule(rule, dp):
     """Mutate a DeviceProfile in place per the rule. Returns True if changed."""
+    spec, _ = normalize(rule)
+    a, v = spec["audio"], spec["video"]
     changed = False
 
-    # keep_audio_codecs: restrict which audio codecs a client may direct-play.
-    # Set it on every video entry. An entry without AudioCodec allows every codec.
-    keep = _keep_audio(rule)
-    if keep:
-        for d in (dp.get("DirectPlayProfiles") or []):
-            if d.get("Type") == "Video":
-                d["AudioCodec"] = keep
+    if a["allow"] or a["deny"] or a["transcode_to"]:
+        _limit_codecs(dp, "AudioCodec", a["allow"], a["deny"], a["transcode_to"], "aac",
+                      "VideoAudio", {"Condition": "LessThanEqual", "Property": "AudioChannels", "Value": "0"})
         changed = True
 
-    # transcode_audio_codec: the codec(s) that the server may send when it does not
-    # direct-play. Jellyfin copies the source audio if its codec is in this list,
-    # so this also stops a remux that keeps a bad codec (for example, Opus).
-    tac = rule.get("transcode_audio_codec")
-    if tac:
-        for tp in (dp.get("TranscodingProfiles") or []):
-            if tp.get("Type") == "Video":
-                tp["AudioCodec"] = tac
-        changed = True
-
-    ch = rule.get("max_audio_channels")
+    ch = a["max_channels"]
     if ch is not None:
-        ch = str(ch)
         for tp in (dp.get("TranscodingProfiles") or []):
             if tp.get("Type") == "Video":
-                tp["MaxAudioChannels"] = ch
+                tp["MaxAudioChannels"] = str(ch)
         _codec_profiles(dp).append(
             {"Type": "VideoAudio",
              "Codec": "aac,ac3,eac3,dts,truehd,mp3,flac,opus,vorbis,dca",
              "Conditions": [{"Condition": "LessThanEqual", "Property": "AudioChannels",
-                             "Value": ch, "IsRequired": True}]})
+                             "Value": str(ch), "IsRequired": True}]})
         changed = True
 
-    mw = rule.get("max_width")
-    if isinstance(mw, int):
+    if v["allow"] or v["deny"]:
+        _limit_codecs(dp, "VideoCodec", v["allow"], v["deny"], [], "h264",
+                      "Video", {"Condition": "LessThanEqual", "Property": "Width", "Value": "0"})
+        changed = True
+
+    if v["max_width"] is not None:
         _codec_profiles(dp).append(
-            {"Type": "Video", "Codec": "h264,hevc,mpeg4,vp9,av1,vc1",
+            {"Type": "Video", "Codec": _ALL_VIDEO,
              "Conditions": [{"Condition": "LessThanEqual", "Property": "Width",
-                             "Value": str(mw), "IsRequired": True}]})
+                             "Value": str(v["max_width"]), "IsRequired": True}]})
         changed = True
 
-    if isinstance(rule.get("max_bitrate"), int):
-        dp["MaxStreamingBitrate"] = rule["max_bitrate"]
-        changed = True
-
-    # keep_video_codecs: restrict which video codecs a client may direct-play.
-    kv = rule.get("keep_video_codecs")
-    if kv:
-        for d in (dp.get("DirectPlayProfiles") or []):
-            if d.get("Type") == "Video" and d.get("VideoCodec"):
-                d["VideoCodec"] = kv
-        changed = True
-
-    # max_video_bit_depth: force transcode above this bit depth (e.g. 8 -> 10-bit transcodes).
-    bd = rule.get("max_video_bit_depth")
-    if isinstance(bd, int):
+    if v["max_bit_depth"] is not None:
         _codec_profiles(dp).append(
-            {"Type": "Video", "Codec": "h264,hevc,mpeg4,vp9,av1,vc1",
+            {"Type": "Video", "Codec": _ALL_VIDEO,
              "Conditions": [{"Condition": "LessThanEqual", "Property": "VideoBitDepth",
-                             "Value": str(bd), "IsRequired": True}]})
+                             "Value": str(v["max_bit_depth"]), "IsRequired": True}]})
+        changed = True
+
+    if spec["max_bitrate"] is not None:
+        dp["MaxStreamingBitrate"] = spec["max_bitrate"]
         changed = True
 
     return changed

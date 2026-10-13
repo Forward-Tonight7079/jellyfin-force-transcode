@@ -3,6 +3,33 @@
 This file lists all notable changes to the project. It follows
 [Keep a Changelog](https://keepachangelog.com/) and [Semantic Versioning](https://semver.org/).
 
+## [1.0.0] - 2026-10-13
+
+### Added
+- New rule schema with two groups: `audio` (`allow`, `deny`, `transcode_to`, `max_channels`) and
+  `video` (`allow`, `deny`, `max_bit_depth`, `max_width`). `max_bitrate` stays at the top level.
+- `audio.deny` / `video.deny` — codecs that the server must always transcode. One field fixes a device
+  that reports a codec but plays it badly, for example `"audio": { "deny": ["opus"] }`.
+- Codec lists accept a JSON array (`["aac", "mp3"]`) or a comma string (`"aac,mp3"`).
+- Log warnings, one time for each rule: `deprecated field X -> use Y` and `unknown field X (ignored)`.
+  Before, a misspelled field did nothing without a message.
+- README: "Upgrade from 0.x" table; second real case (Fire tablet, 10-bit HEVC).
+
+### Changed
+- `allow` and `deny` also limit the client's transcode codec list. Before, Jellyfin could make a remux
+  and copy a blocked codec (seen with Opus over fMP4 HLS). `audio.transcode_to` is now optional.
+- `allow` keeps only the codecs that the client also reports. Before, `keep_audio_codecs` replaced the
+  client's list and could add codecs that the client did not report.
+- The `rewrote PlaybackInfo` log line uses the new names, for example
+  `audio(deny=opus) video(max_bit_depth=8)`.
+
+### Deprecated
+- The flat 0.x fields still work and map to the new ones: `max_audio_channels` -> `audio.max_channels`,
+  `keep_audio_codecs` -> `audio.allow`, `transcode_audio_codec` -> `audio.transcode_to`,
+  `keep_video_codecs` -> `video.allow`, `max_video_bit_depth` -> `video.max_bit_depth`,
+  `max_width` -> `video.max_width`. The old `max_audio_channels` alone still limits direct play to AAC
+  and MP3; the new `audio.max_channels` does not.
+
 ## [0.3.0] - 2026-10-12
 
 ### Added
@@ -63,6 +90,7 @@ This file lists all notable changes to the project. It follows
 - Multi-arch image (linux/amd64, linux/arm64) published to GHCR by CI; pytest test suite gating the
   build.
 
+[1.0.0]: https://github.com/Forward-Tonight7079/jellyfin-force-transcode/releases/tag/v1.0.0
 [0.3.0]: https://github.com/Forward-Tonight7079/jellyfin-force-transcode/releases/tag/v0.3.0
 [0.2.2]: https://github.com/Forward-Tonight7079/jellyfin-force-transcode/releases/tag/v0.2.2
 [0.2.1]: https://github.com/Forward-Tonight7079/jellyfin-force-transcode/releases/tag/v0.2.1

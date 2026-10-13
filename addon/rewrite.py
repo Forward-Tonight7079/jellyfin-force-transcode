@@ -54,6 +54,9 @@ def request(flow: http.HTTPFlow) -> None:
         rules = engine.load_rules(RULES_PATH)
         if not rules:
             return
+        for r in rules:
+            for note in engine.rule_notes_once(r):
+                log.warning("rule=%s: %s" % (r.get("name", "?"), note))
 
         rule = engine.pick_rule(rules, ctx)
         if not rule:
