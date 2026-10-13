@@ -306,18 +306,14 @@ about the other cases.
 
 ### Kids tablet: the video freezes on 7.1 audio
 
-**Problem 1: audio.** A kids' tablet (Xiaomi Pad, 8.7-inch screen, 1340 × 800 pixels) uses the
-"Jellyfin for Android" app with the integrated player (ExoPlayer). Only this player has
-Picture-in-Picture. The player tells the server that it plays multichannel E-AC-3. For a movie with 7.1
-audio, the server transcodes the video but copies the audio. The tablet cannot play this audio, and
+**Problem 1: audio.** A kids' tablet (8.7-inch screen) uses the "Jellyfin for Android" app with the
+integrated player (ExoPlayer), because only this player has Picture-in-Picture. The player tells the
+server that it plays multichannel E-AC-3. For movies with 7.1 audio, the server copies the audio, and
 the video freezes.
 
-On 17 movies with 7.1 audio, 9 froze, 2 gave an error, and 6 played. Each movie with E-AC-3 7.1 audio
-froze. The Web Player of the app gets stereo audio, but it has no Picture-in-Picture.
-
-**Problem 2: direct play on a small screen.** Some files (for example, 1080p video with AAC stereo
-audio) direct-play at the full bitrate, such as 41 Mbps. On an 8.7-inch screen, the picture is not
-better, but the playback starts slowly.
+**Problem 2: full bitrate on a small screen.** Some files direct-play at the full bitrate (for example,
+41 Mbps). On an 8.7-inch screen, the picture is not better. When the tablet uses a phone hotspot, the
+data flow is too large for the slow connection, and the video buffers frequently.
 
 **Fix.** One rule for the app:
 
@@ -333,11 +329,10 @@ better, but the playback starts slowly.
 
 - `audio.max_channels: 2` makes the server downmix the audio to stereo.
 - `audio.allow` makes sure that the tablet gets only AAC or MP3, not E-AC-3.
-- `video.max_width: 1344` is near the panel width (1340 pixels). Wider video gives no more detail on
-  this screen.
-- `max_bitrate: 6000000` (6 Mbps) is sufficient for this screen, and the playback starts quickly.
+- `video.max_width: 1344` is near the screen width (1340 pixels).
+- `max_bitrate: 6000000` (6 Mbps) is sufficient for this screen and for a phone hotspot.
 
-The integrated player stays, so Picture-in-Picture works. The media files do not change.
+Picture-in-Picture still works, and the media files do not change.
 
 **Verify.** Play a movie with 7.1 audio. The proxy log must show the audio as `aac 2ch`:
 
