@@ -13,31 +13,27 @@ from the server. It is not a plugin. It does not change Jellyfin. It does not ch
 
 - [Why this exists](#why-this-exists) · [Do you even need this?](#do-you-even-need-this)
 - [What it solves](#what-it-solves-common-cases) · [How it works](#how-it-works) · [Compatibility](#compatibility)
-- [Quick start](#quick-start) · [Configuration](#configuration-rulesjson) · [Logging](#logging)
-- [Real cases](#real-cases)
-- [Troubleshooting](#troubleshooting) · [License](#license)
+- [Quick start](#quick-start) · [Configuration](#configuration-rulesjson) · [Real cases](#real-cases)
+- [Logging](#logging) · [Troubleshooting](#troubleshooting) · [License](#license)
 
 ## Why this exists
 
 Jellyfin decides to **transcode** or to **direct-play** from the *client's* device profile. Jellyfin
-trusts the client. Some things are still difficult to force from the server:
+trusts the client. When a client reports more than it can play, the server has few tools to correct it:
 
-- **Force audio to stereo.** In the past, Jellyfin ignored the setting "Maximum Allowed Audio
-  Channels" for direct play ([jellyfin-web#5715](https://github.com/jellyfin/jellyfin-web/issues/5715)).
-  Jellyfin 10.9.11 corrected this, so the setting now applies to direct play. But the user must enable
-  it, and the client must show it. Some clients (for example, the Android app with the ExoPlayer
-  player) still tell the server that they support multichannel audio. The server then copies the
-  audio. Devices with stereo speakers then freeze or give no sound on 5.1 or 7.1 audio. A related
-  report is closed as *not planned* ([jellyfin#11002](https://github.com/jellyfin/jellyfin/issues/11002)).
-- **Force one device to transcode video.** Jellyfin has no setting to always transcode for one client.
-  You can only disable transcoding for a user, and then playback **fails**; it does not transcode
+- **Audio channels.** In the past, Jellyfin ignored the setting "Maximum Allowed Audio Channels" for
+  direct play ([jellyfin-web#5715](https://github.com/jellyfin/jellyfin-web/issues/5715)). Jellyfin
+  10.9.11 corrected this. But the user must enable the setting, and the client must show it. Some
+  clients (for example, the Android app with the ExoPlayer player) still report multichannel support,
+  and stereo devices then freeze or give no sound. A related report is closed as *not planned*
+  ([jellyfin#11002](https://github.com/jellyfin/jellyfin/issues/11002)).
+- **Transcoding for one device.** Jellyfin has no setting to always transcode for one client. You can
+  only disable transcoding for a user, and then playback **fails**
   ([docs](https://jellyfin.org/docs/general/post-install/transcoding/)). Or you can set one global
-  bitrate limit. So a device that direct-plays a codec badly (for example, a Fire TV that stutters on
-  HEVC, [forum](https://forum.jellyfin.org/t-force-trasnscoding-or-disable-directplay-x265-stuttering-firetv))
-  has no clean fix for one device.
-- **Block one audio codec for one device.** A TV can report that it plays a codec (for example, Opus),
-  but the audio then stutters. Jellyfin has no setting to stop direct play of one audio codec for one
-  client.
+  bitrate limit.
+- **One codec or one format for one device.** Jellyfin cannot stop direct play of one codec (for
+  example, Opus on a TV that stutters on it) or of 10-bit video (for example, on a tablet that crashes
+  on it) for one client.
 
 This proxy changes only one request — the request where this negotiation occurs (`PlaybackInfo`). The
 server then transcodes what you specify — audio, video, or both — for the clients that you select.
@@ -58,19 +54,28 @@ Use this proxy when those options are not available or not sufficient. For examp
 - The client has no such setting.
 - You want the server to force the setting for all clients.
 - You need different settings for each device or each user.
-- You must force video transcoding (resolution or bitrate). No built-in setting does this.
+- You must force a transcode for one codec, a bit depth, a resolution, or a bitrate. No built-in
+  setting does this for one device.
 
 ## What it solves (common cases)
 
-- **Multichannel audio freezes or gives no sound** — force a stereo downmix.
-- **Stereo-only speakers** — always downmix to 2 channels.
-- **A device stutters or fails on a codec that it reports as supported** — force it to transcode video.
-- **The audio stutters on one codec (for example, Opus) that the TV reports as supported** — send AAC
-  or E-AC-3 instead. The video and the channel count stay the same. See [Real cases](#real-cases).
-- **Playback buffers on a slow or remote link** — set a bitrate limit, so the server transcodes down.
-- **Small screens** — set a resolution limit (for example, 720p) instead of full resolution.
-- **Any client, not only the Android app** — this includes players that give you no setting for
-  channels, bitrate, or resolution.
+Find your symptom, then use the field in the second column. The [Configuration](#configuration-rulesjson)
+section describes each field.
+
+| Symptom | Rule field | Real case |
+|---|---|---|
+| Multichannel audio (5.1, 7.1) freezes or gives no sound | `"audio": { "max_channels": 2 }` | — |
+| Stereo-only speakers | `"audio": { "max_channels": 2 }` | — |
+| The audio stutters on one codec that the device reports as supported | `"audio": { "deny": ["opus"] }` | [LG TV + Opus](#lg-tv-the-audio-stutters-on-opus) |
+| The player crashes or stutters on 10-bit video | `"video": { "max_bit_depth": 8 }` | [Fire tablet + 10-bit HEVC](#fire-tablet-the-player-crashes-on-10-bit-hevc) |
+| The device plays one video codec badly, at any bit depth | `"video": { "deny": ["hevc"] }` | — |
+| An old device plays only a few codecs | `"video": { "allow": ["h264"] }`, `"audio": { "allow": ["aac"] }` | — |
+| Playback buffers on a slow or remote link | `"max_bitrate": 6000000` | — |
+| A small screen gets full-resolution video | `"video": { "max_width": 1280 }` | — |
+
+This works for any client, also for players that give you no setting for channels, codecs, bitrate,
+or resolution. Did the proxy fix a different problem for you? Open an issue, so it can become a real
+case here.
 
 ## How it works
 
