@@ -2,7 +2,7 @@
 # Self-contained image: the PlaybackInfo-rewrite addon is baked in; no config is.
 # With no rules.json mounted the proxy does nothing (passthrough).
 # Mount a rules.json at /addon/rules.json to force audio and/or video transcoding.
-FROM mitmproxy/mitmproxy:12.2.3
+FROM mitmproxy/mitmproxy:12.3.0
 
 LABEL org.opencontainers.image.title="jellyfin-force-transcode" \
       org.opencontainers.image.description="Reverse proxy that rewrites Jellyfin PlaybackInfo to force server-side audio and/or video transcoding for chosen clients — something Jellyfin has no built-in setting for." \
