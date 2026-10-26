@@ -1,29 +1,30 @@
 {
+  "devices": {
+    "kids-tablet":    ["192.168.1.40", "10.1.0.3"],
+    "living-room-tv": ["192.168.1.50"],
+    "office":         "192.168.20.0/24"
+  },
   "rules": [
-    { "name": "kids-account-any-device",
-      "match": { "user_id": "3f2a1b4c5d6e7f8091a2b3c4d5e6f708" },
-      "audio": { "max_channels": 2 } },
+    { "name": "kids-tablet",
+      "match": { "device": "kids-tablet" },
+      "audio": { "max_channels": 2, "transcode_to": "aac" },
+      "video": { "max_width": 1280 },
+      "max_bitrate": 6000000 },
 
     { "name": "lg-tv-no-opus",
-      "match": { "device_id": "fedcba9876543210fedcba9876543210" },
+      "match": { "device": "living-room-tv" },
       "audio": { "deny": ["opus"] } },
+
+    { "name": "kids-accounts",
+      "match": { "user": ["Reggie", "Sid"] },
+      "audio": { "max_channels": 2 } },
 
     { "name": "fire-tablet-no-10bit",
       "match": { "client": "Jellyfin Android" },
       "video": { "max_bit_depth": 8 } },
 
-    { "name": "any-android-app",
-      "match": { "client": "/Android/" },
-      "audio": { "max_channels": 2 },
-      "video": { "max_width": 1280 },
-      "max_bitrate": 6000000 },
-
-    { "name": "living-room-tv-force-video-only",
-      "match": { "device_id": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678" },
-      "max_bitrate": 20000000 },
-
     { "name": "old-tv-h264-only",
-      "match": { "device_id": "0123456789abcdef" },
+      "match": { "ip": "192.168.1.60" },
       "video": { "allow": ["h264"] } },
 
     { "name": "everything-else",

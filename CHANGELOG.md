@@ -3,6 +3,31 @@
 This file lists all notable changes to the project. It follows
 [Keep a Changelog](https://keepachangelog.com/) and [Semantic Versioning](https://semver.org/).
 
+## [1.2.0] - 2026-10-26
+
+### Added
+- `devices` section in `rules.json`: a name and the IP addresses (or networks in CIDR format) of each
+  device. A device can also use other keys (`device_id`, `client`, …); one fitting key is sufficient.
+- Match keys `device` (a name from `devices`) and `ip` (addresses or networks). The network identifies a
+  device in each app; the values that apps send (`DeviceId`) identify an app installation.
+- Client IP from `X-Forwarded-For` / `X-Real-IP`, only when the connection comes from a trusted proxy.
+  New setting `TRUSTED_PROXIES` (default: loopback and private networks).
+- Match key `user` (the user name). Many apps (jellyfin-sdk-kotlin) do not send the user id, so the
+  proxy asks Jellyfin `GET /Users/Me` with the token of the client and keeps the answer for one hour.
+  This also fills `user_id` for these apps.
+- A list of values in any match key is a logical OR: `"user": ["Reggie", "Sid"]`.
+- Startup warnings for an unknown match key, an unknown device name, and a bad IP address or network.
+- `docs/`: the Matching guide (what a client sends; match by device, app, user) and the real cases.
+
+### Changed
+- `PlaybackInfo from …` now shows `device`, `ip`, and `user`, and prints again when the user or the IP
+  address changes. The `playback …` line shows the device and the user.
+- `user_id` comparison ignores dashes and capital letters.
+- README: the matching details and the real cases moved to `docs/`.
+
+### Fixed
+- A rule by `user_id` did not fit for the Android and Android TV apps (`user_id=None`).
+
 ## [1.1.0] - 2026-10-13
 
 ### Added
@@ -107,6 +132,7 @@ This file lists all notable changes to the project. It follows
 - Multi-arch image (linux/amd64, linux/arm64) published to GHCR by CI; pytest test suite gating the
   build.
 
+[1.2.0]: https://github.com/Forward-Tonight7079/jellyfin-force-transcode/releases/tag/v1.2.0
 [1.1.0]: https://github.com/Forward-Tonight7079/jellyfin-force-transcode/releases/tag/v1.1.0
 [1.0.0]: https://github.com/Forward-Tonight7079/jellyfin-force-transcode/releases/tag/v1.0.0
 [0.3.0]: https://github.com/Forward-Tonight7079/jellyfin-force-transcode/releases/tag/v0.3.0

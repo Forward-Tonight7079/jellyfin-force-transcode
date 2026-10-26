@@ -58,12 +58,12 @@ def test_exact_client_match_after_decode():
     assert engine.value_matches("Jellyfin for Android", ctx["client"])
 
 def test_ctx_user_id_from_query_wins():
-    ctx = engine.build_ctx('MediaBrowser Client="X"', "UA", "uid-query", {"UserId": "uid-body"})
-    assert ctx["user_id"] == "uid-query"
+    ctx = engine.build_ctx('MediaBrowser Client="X"', "UA", "AA-11", {"UserId": "bb22"})
+    assert ctx["user_id"] == "aa11"
 
 def test_ctx_user_id_from_body_fallback():
-    ctx = engine.build_ctx('MediaBrowser Client="X"', "UA", None, {"UserId": "uid-body"})
-    assert ctx["user_id"] == "uid-body"
+    ctx = engine.build_ctx('MediaBrowser Client="X"', "UA", None, {"UserId": "BB-22"})
+    assert ctx["user_id"] == "bb22"
 
 
 # --- rule_matches / pick_rule --------------------------------------------
@@ -259,11 +259,13 @@ def test_apply_nothing_changes_nothing():
 
 def test_describe_ctx_shows_parsed_values():
     ctx = engine.build_ctx('MediaBrowser Client="Jellyfin for Android", DeviceId="abc"',
-                           "UA", "uid-1", {})
+                           "UA", "UID1", {}, ip="192.168.8.165")
+    ctx["device"] = "reggie-tablet"
     s = engine.describe_ctx(ctx)
+    assert s.startswith("device=reggie-tablet ip=192.168.8.165 ")
     assert "client='Jellyfin for Android'" in s
     assert "device_id='abc'" in s
-    assert "user_id='uid-1'" in s
+    assert "user_id='uid1'" in s
 
 def test_describe_ctx_shows_none_for_missing():
     ctx = engine.build_ctx("", "", None, {})
@@ -361,3 +363,78 @@ def test_outcome_remux_and_errors():
     assert engine.describe_outcome({"ErrorCode": "NoCompatibleStream"}) == "error NoCompatibleStream"
     assert engine.describe_outcome({"MediaSources": []}) is None
     assert engine.describe_outcome("junk") is None
+
+
+# --- client IP -------------------------------------------------------------
+
+def test_client_ip_untrusted_peer_ignores_headers():
+    assert engine.client_ip("203.0.113.9", "10.0.0.1", "10.0.0.2") == "203.0.113.9"
+
+def test_client_ip_trusted_peer_uses_forwarded_for():
+    # gate (docker gateway) -> proxy; the LAN client is private, so the left-most hop wins
+    assert engine.client_ip("172.29.0.1", "192.168.8.165") == "192.168.8.165"
+    # public client behind two trusted proxies: the right-most untrusted hop
+    assert engine.client_ip("172.29.0.1", "198.51.100.7, 172.29.0.2") == "198.51.100.7"
+    # a spoofed left-most value does not win over the real untrusted hop
+    assert engine.client_ip("127.0.0.1", "1.2.3.4, 198.51.100.7") == "198.51.100.7"
+
+def test_client_ip_real_ip_and_mapped_v4():
+    assert engine.client_ip("127.0.0.1", None, "10.1.0.3") == "10.1.0.3"
+    assert engine.client_ip("::ffff:192.168.8.165") == "192.168.8.165"
+    assert engine.client_ip("172.29.0.1", "junk", None) == "172.29.0.1"
+
+def test_client_ip_custom_trusted_list():
+    assert engine.client_ip("172.29.0.1", "192.168.8.165", trusted="127.0.0.1/32") == "172.29.0.1"
+
+def test_ip_in():
+    assert engine.ip_in("10.1.0.3", ["192.168.8.0/24", "10.1.0.0/24"])
+    assert engine.ip_in("192.168.8.165", "192.168.8.165")
+    assert not engine.ip_in("192.168.9.1", "192.168.8.0/24")
+    assert engine.ip_in("fd00::5", "fd00::/8") and not engine.ip_in("fd00::5", "10.0.0.0/8")
+    assert not engine.ip_in(None, "0.0.0.0/0") and not engine.ip_in("x", "0.0.0.0/0")
+
+
+# --- devices and match lists ------------------------------------------------
+
+DEVICES = {"reggie-tablet": ["192.168.8.165", "10.1.0.3"],
+           "living-room-tv": {"ip": "192.168.8.50", "device_id": "/^tvid/"},
+           "office": "192.168.20.0/24"}
+
+def test_resolve_device_by_ip_and_by_other_key():
+    assert engine.resolve_device(DEVICES, {"ip": "10.1.0.3"}) == "reggie-tablet"
+    assert engine.resolve_device(DEVICES, {"ip": "192.168.20.7"}) == "office"
+    # any key in one spec may fit (OR): device_id from another network
+    assert engine.resolve_device(DEVICES, {"ip": "198.51.100.7", "device_id": "tvid-123"}) == "living-room-tv"
+    assert engine.resolve_device(DEVICES, {"ip": "192.168.8.99"}) is None
+    assert engine.resolve_device({}, {"ip": "10.1.0.3"}) is None
+
+def test_match_device_ip_and_lists():
+    ctx = {"device": "reggie-tablet", "ip": "10.1.0.3", "client": "Moonfin for Android", "user": "Reggie"}
+    assert engine.rule_matches({"device": ["sid-tablet", "reggie-tablet"]}, ctx)
+    assert engine.rule_matches({"device": "reggie-tablet", "client": "/Moonfin/"}, ctx)
+    assert not engine.rule_matches({"device": "reggie-tablet", "client": "Jellyfin for Android"}, ctx)
+    assert engine.rule_matches({"ip": ["10.1.0.0/24"]}, ctx)
+    assert engine.rule_matches({"user": ["Sid", "Reggie"]}, ctx)
+    assert not engine.rule_matches({"device": "x"}, {"device": None})
+
+def test_match_user_id_normalized():
+    ctx = {"user_id": "60074fe797b74dadb922fb24e4e3cb08"}
+    assert engine.rule_matches({"user_id": "60074FE7-97B7-4DAD-B922-FB24E4E3CB08"}, ctx)
+
+def test_config_notes():
+    cfg = {"devices": {"a": ["192.168.1.300"], "b": {"mac": "x"}},
+           "rules": [{"name": "r1", "match": {"device": "nope", "clinet": "x", "ip": "bad"}}]}
+    notes = engine.config_notes(cfg)
+    assert "device=a: bad IP or network '192.168.1.300'" in notes
+    assert "device=b: unknown key mac (ignored)" in notes
+    assert "rule=r1: device 'nope' is not in \"devices\"" in notes
+    assert "rule=r1: unknown match key clinet (the rule never fits)" in notes
+    assert "rule=r1: bad IP or network 'bad'" in notes
+    assert engine.config_notes({"devices": DEVICES, "rules": [{"match": {"device": "office"}}]}) == []
+
+def test_load_config_with_devices(tmp_path):
+    p = tmp_path / "r.json"
+    p.write_text('{"devices":{"t":["10.1.0.3"]},"rules":[{"name":"a","match":{"device":"t"}}]}')
+    cfg = engine.load_config(str(p))
+    assert cfg["devices"] == {"t": ["10.1.0.3"]} and cfg["rules"][0]["name"] == "a"
+    assert engine.load_rules(str(p))[0]["name"] == "a"

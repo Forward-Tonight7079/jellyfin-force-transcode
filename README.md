@@ -13,8 +13,9 @@ from the server. It is not a plugin. It does not change Jellyfin. It does not ch
 
 - [Why this exists](#why-this-exists) · [Do you need this proxy?](#do-you-need-this-proxy)
 - [What it solves](#what-it-solves-common-cases) · [How it works](#how-it-works) · [Compatibility](#compatibility)
-- [Quick start](#quick-start) · [Configuration](#configuration-rulesjson) · [Real cases](#real-cases)
-- [Logging](#logging) · [Troubleshooting](#troubleshooting) · [License](#license)
+- [Quick start](#quick-start) · [Configuration](#configuration-rulesjson) · [Logging](#logging)
+- [Troubleshooting](#troubleshooting) · [License](#license)
+- **[Matching guide](docs/README.md)**: how to select a device, an app, or a user, and real cases
 
 ## Why this exists
 
@@ -39,7 +40,7 @@ This proxy changes only one request: the request where this negotiation occurs (
 server then transcodes the audio, the video, or both, for the clients that you select.
 
 > I made this tool because a kids' tablet froze on many movies with 7.1 audio. I did not want to
-> re-encode all my files. See the [kids tablet case](#kids-tablet-the-video-freezes-on-71-audio).
+> re-encode all my files. See the [kids tablet case](docs/cases/kids-tablet.md).
 
 ### Do you need this proxy?
 
@@ -64,14 +65,14 @@ Find your symptom in the table. Then use the field in the second column. The
 
 | Symptom | Rule field | Real case |
 |---|---|---|
-| Multichannel audio (5.1, 7.1) freezes or gives no sound | `"audio": { "max_channels": 2 }` | [Kids tablet + 7.1](#kids-tablet-the-video-freezes-on-71-audio) |
+| Multichannel audio (5.1, 7.1) freezes or gives no sound | `"audio": { "max_channels": 2 }` | [Kids tablet + 7.1](docs/cases/kids-tablet.md) |
 | Stereo-only speakers | `"audio": { "max_channels": 2 }` | — |
-| The audio stutters on one codec that the device reports as supported | `"audio": { "deny": ["opus"] }` | [LG TV + Opus](#lg-tv-the-audio-stutters-on-opus) |
-| The player crashes or stutters on 10-bit video | `"video": { "max_bit_depth": 8 }` | [Fire tablet + 10-bit HEVC](#fire-tablet-the-player-crashes-on-10-bit-hevc) |
+| The audio stutters on one codec that the device reports as supported | `"audio": { "deny": ["opus"] }` | [LG TV + Opus](docs/cases/lg-opus.md) |
+| The player crashes or stutters on 10-bit video | `"video": { "max_bit_depth": 8 }` | [Fire tablet + 10-bit HEVC](docs/cases/fire-10bit.md) |
 | The device plays one video codec badly, at any bit depth | `"video": { "deny": ["hevc"] }` | — |
 | An old device plays only a few codecs | `"video": { "allow": ["h264"] }`, `"audio": { "allow": ["aac"] }` | — |
 | Playback buffers on a slow or remote link | `"max_bitrate": 6000000` | — |
-| A small screen gets full-resolution video | `"video": { "max_width": 1280 }` | [Kids tablet + 7.1](#kids-tablet-the-video-freezes-on-71-audio) |
+| A small screen gets full-resolution video | `"video": { "max_width": 1280 }` | [Kids tablet + 7.1](docs/cases/kids-tablet.md) |
 
 This works for any client, also for players that give you no setting for channels, codecs, bitrate,
 or resolution. Did the proxy fix a different problem for you? Open an issue, so it can become a real
@@ -161,11 +162,11 @@ warning for each misspelled field. Then play a title on the client. The proxy wr
 rule and with the decision of Jellyfin:
 
 ```
-jft: playback client='Jellyfin Android TV' rule=fire-tv audio(max_channels=2) video(max_width=1920) max_bitrate=8000000 -> transcode: video -> h264, audio -> aac 2ch (AudioChannelsNotSupported)
+jft: playback device=unknown user='alex' client='Jellyfin Android TV' rule=fire-tv audio(max_channels=2) video(max_width=1920) max_bitrate=8000000 -> transcode: video -> h264, audio -> aac 2ch (AudioChannelsNotSupported)
 ```
 
 If the line shows `rule=none`, the rule did not fit. Check the client name (see
-[How matching works](#how-matching-works)).
+[Match: select the playbacks](#match-select-the-playbacks)).
 
 ## Configuration (rules.json)
 
@@ -174,24 +175,24 @@ only the address of your Jellyfin. This example has several rules:
 
 ```json
 {
+  "devices": {
+    "kids-tablet":    ["192.168.1.40", "10.1.0.3"],
+    "living-room-tv": ["192.168.1.50"]
+  },
   "rules": [
-    { "name": "kids-account-any-device",
-      "match": { "user_id": "3f2a1b4c5d6e7f8091a2b3c4d5e6f708" },
-      "audio": { "max_channels": 2 } },
-
-    { "name": "lg-tv-no-opus",
-      "match": { "device_id": "fedcba9876543210fedcba9876543210" },
-      "audio": { "deny": ["opus"] } },
-
-    { "name": "fire-tablet-no-10bit",
-      "match": { "client": "Jellyfin Android" },
-      "video": { "max_bit_depth": 8 } },
-
-    { "name": "any-android-app",
-      "match": { "client": "/Android/" },
+    { "name": "kids-tablet",
+      "match": { "device": "kids-tablet" },
       "audio": { "max_channels": 2 },
       "video": { "max_width": 1280 },
       "max_bitrate": 6000000 },
+
+    { "name": "tv-no-opus",
+      "match": { "device": "living-room-tv" },
+      "audio": { "deny": ["opus"] } },
+
+    { "name": "kids-account",
+      "match": { "user": ["Reggie", "Sid"] },
+      "audio": { "max_channels": 2 } },
 
     { "name": "everything-else",
       "match": {},
@@ -225,6 +226,28 @@ Write a codec list as a JSON array (`["aac", "mp3"]`) or as a comma string (`"aa
 A rule with none of these fields does nothing. A misspelled field also does nothing, but the proxy
 writes a warning about it in the log (see [Logging](#logging)).
 
+### Match: select the playbacks
+
+`match` selects the playbacks for a rule. The proxy applies the **first** rule whose `match` fits.
+Each key in `match` must fit (AND). A list of values fits when one value fits (OR). An empty
+`match: {}` fits each playback.
+
+| Key | Selects | Example |
+|---|---|---|
+| `device` | one device from the `devices` section (by IP address) | `"device": "living-room-tv"` |
+| `ip` | an IP address or a network | `"ip": "10.1.0.0/24"` |
+| `user` / `user_id` | one person | `"user": "Reggie"` |
+| `client` | one type of app | `"client": "Jellyfin for Android"` |
+| `device_id` | one installation of an app | `"device_id": "/^0bf2cfd8/"` |
+| `user_agent` | the app and its version | `"user_agent": "/okhttp/i"` |
+
+A value is a plain string (equal) or a `/regex/`. The log line `PlaybackInfo from …` shows the values
+of each client. The proxy reads `rules.json` again when you save it.
+
+**Which key to use?** Read the [Matching guide](docs/README.md). For one device, use
+`device`, because the values that the apps send change for different reasons. For one person, use
+`user`.
+
 ### Upgrade from 0.x
 
 Version 1.0 moved the fields into the `audio` and `video` groups. **The old fields still work.** The
@@ -244,158 +267,6 @@ One difference: the old `max_audio_channels` field also allowed direct play only
 old field keeps this behavior. The new `audio.max_channels` field sets a limit only for the channels.
 To get the old result, add `"allow": ["aac", "mp3"]`.
 
-### How matching works
-
-For each `POST .../PlaybackInfo` request, the proxy reads four values from the request:
-
-| Match key | Taken from |
-|---|---|
-| `client` | the `Client="..."` field of the Authorization header (for example, `Jellyfin for Android`, `Jellyfin Android TV`, `Jellyfin Web`, `Findroid`). The proxy decodes this value, so write the name with normal spaces. |
-| `device_id` | the `DeviceId="..."` field of the Authorization header (one value for each installation) |
-| `user_agent` | the `User-Agent` header |
-| `user_id` | the Jellyfin user — the `userId` query parameter (or `UserId` in the body) |
-
-The proxy then reads the `rules` list from top to bottom. It applies the **first** rule whose `match`
-fits, and then it stops. A `match` fits only when **every** key in it fits (logical AND). An empty
-`match: {}` fits all clients. Put such a rule **last**, as the default rule. If no rule fits, the proxy
-sends the request without changes.
-
-**The proxy compares each value in one of two ways:**
-
-- **A plain string must be equal to the value.** `"client": "Jellyfin for Android"` fits only that
-  client.
-- **A `/regex/` value is a regular expression** (Python `re.search`). It can fit at any position in
-  the value, so it also finds a part of the value. Add flags after the last slash. The flag `i` means
-  that the case does not matter:
-  - `"client": "/Android/"` fits `Jellyfin for Android` and `Jellyfin Android TV`
-  - `"user_agent": "/okhttp/i"` — the case does not matter
-  - `"device_id": "/^abc123/"` — starts with `abc123`
-
-A bad regular expression does not stop playback. It does not fit any value, and the proxy writes a warning.
-
-**Where to find the values.** The best source is the log. Do these steps:
-
-1. Start the proxy with `LOG=events` (the default).
-2. Play one title on the device.
-3. Read the `PlaybackInfo from …` line (see [Logging](#logging)). It shows the exact `client`,
-   `device_id`, and `user_id` that the proxy parsed.
-4. Copy these values into your `match`.
-
-The Jellyfin dashboard can show a different string, so use the log.
-
-The dashboard is still a good reference. The client name and the DeviceId are in **Dashboard →
-Devices**. The user id is in **Dashboard → Users** (open the user; the id is in the page address).
-Example formats:
-
-- `client`: `Jellyfin for Android`, `Jellyfin Android TV`, `Jellyfin Web`, `Findroid`, `Moonfin for Android`
-- `device_id` — a value without a meaning, one for each installation: 40-character hex (Android TV), hex plus a
-  partial GUID (Android app), 16-character hex (Findroid), a UUID (Moonfin), a long base64 string (Web)
-- `user_id` — a 32-character hex id, for example `3f2a1b4c5d6e7f8091a2b3c4d5e6f708`
-- `user_agent`:
-  - `Jellyfin for Android/2.7.3 (Linux;Android 16) AndroidXMedia3/1.8.0` — the video player of the app
-  - `Jellyfin for Android/2.7.3 via jellyfin-sdk-kotlin (OkHttp/4.12.0)` — the API calls of the app
-  - `Mozilla/5.0 (...) Chrome/153.0.0.0 Safari/537.36` — a browser, that is, Jellyfin Web
-
-The proxy reads the file again when you save it. You do not need to restart. To use a different path
-for the rules file, set `RULES_FILE`.
-
-## Real cases
-
-Each case below is from a real setup. The first case is the reason for this proxy. Users told us
-about the other cases.
-
-### Kids tablet: the video freezes on 7.1 audio
-
-**Problem 1: audio.** A kids' tablet (8.7-inch screen) uses the "Jellyfin for Android" app with the
-integrated player (ExoPlayer), because only this player has Picture-in-Picture. The player tells the
-server that it plays multichannel E-AC-3. For movies with 7.1 audio, the server copies the audio, and
-the video freezes.
-
-**Problem 2: full bitrate on a small screen.** Some files direct-play at the full bitrate (for example,
-41 Mbps). On an 8.7-inch screen, the picture is not better. When the tablet uses a phone hotspot, the
-data flow is too large for the slow connection, and the video buffers frequently.
-
-**Fix.** One rule for the app:
-
-```json
-{ "rules": [
-    { "name": "kids-tablet",
-      "match": { "client": "Jellyfin for Android" },
-      "audio": { "max_channels": 2, "allow": ["aac", "mp3"] },
-      "video": { "max_width": 1344 },
-      "max_bitrate": 6000000 }
-] }
-```
-
-- `audio.max_channels: 2` makes the server downmix the audio to stereo.
-- `audio.allow` makes sure that the tablet gets only AAC or MP3, not E-AC-3.
-- `video.max_width: 1344` is near the screen width (1340 pixels).
-- `max_bitrate: 6000000` (6 Mbps) is sufficient for this screen and for a phone hotspot.
-
-Picture-in-Picture still works, and the media files do not change.
-
-**Verify.** Play a movie with 7.1 audio. The proxy log must show the audio as `aac 2ch`:
-
-```
-jft: playback client='Jellyfin for Android' rule=kids-tablet audio(allow=aac,mp3 max_channels=2) video(max_width=1344) max_bitrate=6000000 -> transcode: video -> h264, audio -> aac 2ch (…)
-```
-
-### LG TV: the audio stutters on Opus
-
-**Problem.** An LG TV (webOS) reports that it plays Opus audio. Jellyfin direct-plays such files. The
-audio then stutters badly. When the user lowers the bitrate in the player, the server transcodes the
-audio to AAC, and the audio is good. But then the server also transcodes the video, and the video
-quality is lower.
-
-**Fix.** One field: never direct-play Opus on this TV.
-
-```json
-{ "rules": [
-    { "name": "lg-tv-no-opus",
-      "match": { "device_id": "<the TV's device_id from the log>" },
-      "audio": { "deny": ["opus"] } }
-] }
-```
-
-- The server transcodes only the audio. It copies the video without a change, so the CPU load is
-  small. The channel count stays the same (5.1 stays 5.1).
-- Files with other audio codecs (AAC, AC-3, E-AC-3) still direct-play.
-- `deny` also stops a remux that copies the Opus track. The TV also lists Opus for transcoding. Thus,
-  without `deny`, the server can send Opus again. (We saw this on Jellyfin 12.1 with fMP4 HLS.)
-- To select the output codec, add `"transcode_to": "eac3"` (or `"aac"`). Without it, the server selects
-  a codec from the TV's list.
-- To find the `device_id`, play one title on the TV and read the `PlaybackInfo from …` line in the log.
-
-**Verify.** Play a file with Opus audio. The proxy log must show:
-
-```
-jft: playback client='…' rule=lg-tv-no-opus audio(deny=opus) -> transcode: video copied, audio -> aac (AudioCodecNotSupported)
-```
-
-The same rule works for any other audio codec that a device reports but plays badly (for example,
-`["dts", "truehd"]`).
-
-### Fire tablet: the player crashes on 10-bit HEVC
-
-**Problem.** A Fire tablet reports that it plays HEVC. It plays 8-bit HEVC well. But on 10-bit HEVC
-(`hevc (Main 10)`), Jellyfin direct-plays the file, and the player crashes with
-`NO_EXCEEDS_CAPABILITIES`.
-
-**Fix.** Set a limit for the bit depth, not for the codec:
-
-```json
-{ "rules": [
-    { "name": "fire-tablet-no-10bit",
-      "match": { "client": "Jellyfin Android" },
-      "video": { "max_bit_depth": 8 } }
-] }
-```
-
-The server transcodes only the 10-bit files. For a 10-bit file the proxy log shows
-`-> transcode: video -> h264, audio copied (VideoBitDepthNotSupported)`, and for an 8-bit file it shows
-`-> direct play`. `"video": { "deny": ["hevc"] }` also stops the crash, but it transcodes
-all HEVC, also the files that play well.
-
 ## Logging
 
 The container writes its logs to stdout. Read them with `docker logs -f jellyfin-force-transcode`. The
@@ -410,11 +281,11 @@ The container writes its logs to stdout. Read them with `docker logs -f jellyfin
 In `events` mode the log looks like this:
 
 ```
-jft: loaded 2 rule(s) from /addon/rules.json: kids-tablet, lg-tv-no-opus
-jft: rule=lg-tv-no-opus: unknown field audio.denny (ignored)
-jft: PlaybackInfo from client='Jellyfin for Android' device_id='a1b2…' user_id='3f2a…' user_agent='…'
-jft: playback client='Jellyfin for Android' rule=kids-tablet audio(max_channels=2) video(max_width=1344) max_bitrate=6000000 -> transcode: video -> h264, audio -> aac 2ch (AudioChannelsNotSupported, ContainerBitrateExceedsLimit)
-jft: playback client='Jellyfin Web' rule=none -> direct play
+jft: loaded 2 rule(s), 1 device(s) from /addon/rules.json: kids-tablet, everything-else
+jft: rule=kids-tablet: unknown field audio.denny (ignored)
+jft: PlaybackInfo from device=kids-tablet ip=192.168.1.40 user='Reggie' user_id='60074fe7…' client='Jellyfin for Android' device_id='0bf2…' user_agent='…'
+jft: playback device=kids-tablet user='Reggie' client='Jellyfin for Android' rule=kids-tablet audio(max_channels=2) video(max_width=1280) max_bitrate=6000000 -> transcode: video -> h264, audio -> aac 2ch (AudioChannelsNotSupported, ContainerBitrateExceedsLimit)
+jft: playback device=unknown user='alex' client='Jellyfin Web' rule=none -> direct play
 jft: rules file error in /addon/rules.json: Illegal trailing comma before end of array: line 4 column 1 (char 222); keeping the previous 2 rule(s)
 ```
 
@@ -425,10 +296,12 @@ jft: rules file error in /addon/rules.json: Illegal trailing comma before end of
   number and the column. The proxy keeps the previous good rules until you correct the file.
 - **`rule=… deprecated field`** or **`unknown field`**: the proxy writes this warning one time for each
   rule. A deprecated field still works. An unknown field (for example, a typing error) does nothing.
-- **`PlaybackInfo from …`**: the proxy writes this line one time for each new client. It shows the
+- **`PlaybackInfo from …`**: the proxy writes this line one time for each new identity (client,
+  installation, user, and IP address). It shows the
   exact values that the proxy parsed. **Copy these values into a rule `match`.** They can be different
   from the Jellyfin dashboard, so this line is the best source.
-- **`playback …`**: the proxy writes this line for each playback. It shows the rule (or `rule=none`),
+- **`playback …`**: the proxy writes this line for each playback. It shows the device, the user, the
+  app, the rule (or `rule=none`),
   the fields that the rule applied, and the decision of Jellyfin. The decision is `direct play`,
   `remux`, or `transcode` with the reasons. For `transcode`, the line shows each stream: `video copied`
   or `video -> h264`, and `audio copied` or `audio -> aac 2ch`.

@@ -3,14 +3,14 @@
 No mitmproxy dependency, so it is unit-testable with plain Python. rewrite.py is
 a thin mitmproxy adapter around these functions.
 """
-import json, logging, os, re
+import ipaddress, json, logging, os, re
 from urllib.parse import unquote_plus
 
 log = logging.getLogger("force-transcode")
 
 _FLAGS = {"i": re.I, "s": re.S, "m": re.M, "x": re.X}
 _re_cache = {}
-_file_cache = {}  # path -> (mtime, rules)  (last good rules)
+_file_cache = {}  # path -> (mtime, config)  (last good config)
 _file_state = {}  # path -> last reported state, so each state is logged one time
 
 
@@ -43,17 +43,35 @@ def value_matches(pattern, value):
     return value == pattern
 
 
+def _as_list(pattern):
+    return pattern if isinstance(pattern, list) else [pattern]
+
+
 def rule_matches(match, ctx):
+    """Every key must fit (AND). A list of values for one key means any of them (OR)."""
     if not match:
         return True
     for key, pattern in match.items():
-        if not value_matches(pattern, ctx.get(key)):
+        if key == "ip":
+            if not ip_in(ctx.get("ip"), pattern):
+                return False
+        elif key == "user_id":
+            if not any(value_matches(_norm_pattern(p), ctx.get(key)) for p in _as_list(pattern)):
+                return False
+        elif not any(value_matches(p, ctx.get(key)) for p in _as_list(pattern)):
             return False
     return True
 
 
+def _norm_pattern(p):
+    # A plain user id in a rule may have dashes or capitals; a /regex/ stays as written.
+    p = str(p)
+    return p if p.startswith("/") else _norm_id(p)
+
+
 def pick_rule(rules, ctx):
-    return next((r for r in (rules or []) if rule_matches(r.get("match", {}), ctx)), None)
+    return next((r for r in (rules or []) if isinstance(r, dict)
+                 and rule_matches(r.get("match", {}), ctx)), None)
 
 
 def auth_fields(auth):
@@ -63,13 +81,133 @@ def auth_fields(auth):
     return {k: unquote_plus(v) for k, v in re.findall(r'(\w+)="([^"]*)"', auth or "")}
 
 
-def build_ctx(auth, user_agent, query_user_id, body):
+def build_ctx(auth, user_agent, query_user_id, body, ip=None):
     uid = query_user_id
     if uid is None and isinstance(body, dict):
         uid = body.get("UserId")
     f = auth_fields(auth)
     return {"client": f.get("Client"), "device_id": f.get("DeviceId"),
-            "user_agent": user_agent or "", "user_id": uid}
+            "device_name": f.get("Device"), "user_agent": user_agent or "",
+            "user_id": _norm_id(uid), "user": None, "ip": ip, "device": None}
+
+
+def _norm_id(uid):
+    # Jellyfin writes ids with and without dashes, in any case. Compare one form.
+    return uid.replace("-", "").lower() if isinstance(uid, str) and uid else uid
+
+
+# --- client IP and devices ------------------------------------------------
+
+DEFAULT_TRUSTED = "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"
+_net_cache = {}
+
+
+def _net(spec):
+    spec = str(spec).strip()
+    if spec not in _net_cache:
+        try:
+            _net_cache[spec] = ipaddress.ip_network(spec, strict=False)
+        except ValueError:
+            _net_cache[spec] = None
+    return _net_cache[spec]
+
+
+def _addr(value):
+    try:
+        a = ipaddress.ip_address(str(value).strip().strip("[]"))
+    except ValueError:
+        return None
+    # "::ffff:192.168.1.5" is an IPv4 client on a dual-stack socket.
+    return a.ipv4_mapped if getattr(a, "ipv4_mapped", None) else a
+
+
+def ip_in(ip, specs):
+    """True if ip is in any of the IP addresses or networks (CIDR) in specs."""
+    a = _addr(ip) if ip else None
+    if a is None:
+        return False
+    for spec in _as_list(specs):
+        n = _net(spec)
+        if n is not None and a.version == n.version and a in n:
+            return True
+    return False
+
+
+def client_ip(peer, forwarded_for=None, real_ip=None, trusted=DEFAULT_TRUSTED):
+    """The client address. Headers are used only when the peer is a trusted proxy.
+    In X-Forwarded-For, the right-most address that is not trusted is the client."""
+    peer_a = _addr(peer) if peer else None
+    if peer_a is None:
+        return None
+    trusted = [t for t in str(trusted or "").split(",") if t.strip()]
+    if not ip_in(str(peer_a), trusted):
+        return str(peer_a)
+    hops = [h.strip() for h in (forwarded_for or "").split(",") if _addr(h)]
+    for h in reversed(hops):
+        if not ip_in(h, trusted):
+            return str(_addr(h))
+    if hops:
+        return str(_addr(hops[0]))
+    if real_ip and _addr(real_ip):
+        return str(_addr(real_ip))
+    return str(peer_a)
+
+
+_DEVICE_KEYS = ("ip", "device_id", "client", "user_agent", "user", "user_id")
+
+
+def _device_spec(spec):
+    # "name": ["192.168.1.5", "10.1.0.3"]  is short for  "name": {"ip": [...]}
+    if isinstance(spec, dict):
+        return spec
+    return {"ip": spec}
+
+
+def resolve_device(devices, ctx):
+    """Name of the first device whose spec fits. Inside one spec any key may fit (OR)."""
+    for name, spec in (devices or {}).items():
+        for key, pattern in _device_spec(spec).items():
+            if key == "ip":
+                if ip_in(ctx.get("ip"), pattern):
+                    return name
+            elif key in _DEVICE_KEYS and any(value_matches(p, ctx.get(key)) for p in _as_list(pattern)):
+                return name
+    return None
+
+
+def config_notes(cfg):
+    """Warnings for the devices section and for match keys and device names in rules."""
+    notes = []
+    devices = cfg.get("devices") or {}
+    if not isinstance(devices, dict):
+        return ['"devices" must be an object (ignored)']
+    for name, spec in devices.items():
+        for key, pattern in _device_spec(spec).items():
+            if key not in _DEVICE_KEYS:
+                notes.append("device=%s: unknown key %s (ignored)" % (name, key))
+            elif key == "ip":
+                for p in _as_list(pattern):
+                    if _net(p) is None:
+                        notes.append("device=%s: bad IP or network %r" % (name, p))
+    for r in cfg.get("rules") or []:
+        if not isinstance(r, dict):
+            continue
+        rname = r.get("name", "?")
+        for key, pattern in (r.get("match") or {}).items():
+            if key not in _MATCH_KEYS:
+                notes.append("rule=%s: unknown match key %s (the rule never fits)" % (rname, key))
+            elif key == "device":
+                for d in _as_list(pattern):
+                    if isinstance(d, str) and not d.startswith("/") and d not in devices:
+                        notes.append("rule=%s: device %r is not in \"devices\"" % (rname, d))
+            elif key == "ip":
+                for p in _as_list(pattern):
+                    if _net(p) is None:
+                        notes.append("rule=%s: bad IP or network %r" % (rname, p))
+    return notes
+
+
+_MATCH_KEYS = ("client", "device_id", "user_agent", "user_id", "user", "ip", "device")
 
 
 # --- rule schema ----------------------------------------------------------
@@ -169,9 +307,9 @@ def rule_notes_once(rule):
 def describe_ctx(ctx):
     """Show the identity that the proxy parsed. Use these exact values in a
     rule `match`. The values can differ from the Jellyfin dashboard."""
-    return ("client=%r device_id=%r user_id=%r user_agent=%r"
-            % (ctx.get("client"), ctx.get("device_id"),
-               ctx.get("user_id"), ctx.get("user_agent")))
+    return ("device=%s ip=%s user=%r user_id=%r client=%r device_id=%r user_agent=%r"
+            % (ctx.get("device") or "unknown", ctx.get("ip"), ctx.get("user"), ctx.get("user_id"),
+               ctx.get("client"), ctx.get("device_id"), ctx.get("user_agent")))
 
 
 def describe_rule(rule):
@@ -296,35 +434,48 @@ def _report(path, key, level, msg):
     log.log(level, msg)
 
 
-def load_rules(path):
-    """Read rules from a JSON file (mtime-cached). Missing => [] (passthrough).
-    A broken file keeps the last good rules. Each state change is logged one time."""
+def load_config(path):
+    """Read {"devices": {...}, "rules": [...]} from a JSON file (mtime-cached).
+    Missing => empty (passthrough). A broken file keeps the last good config.
+    Each state change is logged one time."""
+    empty = {"rules": [], "devices": {}}
     try:
         st = os.stat(path)
     except FileNotFoundError:
         _file_cache.pop(path, None)
         _report(path, "missing", logging.INFO,
                 "no rules file at %s: passthrough (the proxy changes nothing)" % path)
-        return []
+        return empty
     ent = _file_cache.get(path)
     if ent is not None and ent[0] == st.st_mtime:
         return ent[1]
     try:
         with open(path) as f:
-            rules = json.load(f).get("rules", [])
+            data = json.load(f)
+        rules = data.get("rules", [])
         if not isinstance(rules, list):
             raise ValueError('"rules" must be a list')
+        devices = data.get("devices") or {}
+        cfg = {"rules": rules, "devices": devices if isinstance(devices, dict) else {}}
     except Exception as e:
-        prev = ent[1] if ent else []
-        keep = ("keeping the previous %d rule(s)" % len(prev)) if prev else "passthrough (no rules active)"
+        prev = ent[1] if ent else empty
+        n = len(prev["rules"])
+        keep = ("keeping the previous %d rule(s)" % n) if n else "passthrough (no rules active)"
         _report(path, ("error", st.st_mtime), logging.WARNING,
                 "rules file error in %s: %s; %s" % (path, e, keep))
         return prev
-    _file_cache[path] = (st.st_mtime, rules)
+    _file_cache[path] = (st.st_mtime, cfg)
     names = ", ".join(str(r.get("name", "?")) for r in rules if isinstance(r, dict))
+    dev = (", %d device(s)" % len(cfg["devices"])) if cfg["devices"] else ""
     _report(path, ("ok", st.st_mtime), logging.INFO,
-            "loaded %d rule(s) from %s: %s" % (len(rules), path, names or "-"))
-    return rules
+            "loaded %d rule(s)%s from %s: %s" % (len(rules), dev, path, names or "-"))
+    for note in config_notes(cfg):
+        log.warning(note)
+    return cfg
+
+
+def load_rules(path):
+    return load_config(path)["rules"]
 
 
 # --- Jellyfin decision (PlaybackInfo response) -------------------------------
